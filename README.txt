@@ -15,3 +15,10 @@ Upload all five files together to a static HTTPS host (for example GitHub Pages,
 
 Backup:
 Use “Backup App Data” inside the app regularly. Clearing browser/site data can erase locally stored records.
+
+Update v2:
+- Skip students without marking them absent
+- Unmarked counter
+- Review Attendance screen
+- Correct Present/Late/Absent after saving or after a late arrival
+- Saved sessions remain editable

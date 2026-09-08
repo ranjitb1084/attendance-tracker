@@ -14,7 +14,7 @@
 .card{background:var(--card);border-radius:16px;padding:14px;box-shadow:0 2px 10px rgba(0,0,0,.07);margin-bottom:12px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px} label{font-size:.8rem;color:var(--muted);display:block;margin-bottom:4px}
 select,input,button{font:inherit} select,input[type=date],input[type=text],input[type=file]{width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;background:#fff}
-.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center}.stat{background:#eef3f7;border-radius:12px;padding:9px 4px}.stat b{display:block;font-size:1.1rem}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center}.stat{background:#eef3f7;border-radius:12px;padding:9px 4px}.stat b{display:block;font-size:1.1rem}
 .student{text-align:center;padding:8px 0 4px}.count{font-size:.85rem;color:var(--muted);margin-bottom:8px}.name{font-size:1.8rem;font-weight:750;line-height:1.15;margin:10px 0 4px}.sex{color:var(--muted);font-size:.9rem}
 .actions{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:18px}.actions button{border:0;color:#fff;border-radius:14px;padding:19px 6px;font-size:1.1rem;font-weight:700}.present{background:var(--present)}.late{background:var(--late)}.absent{background:var(--absent)}
 .secondary{width:100%;border:1px solid var(--line);background:#fff;border-radius:10px;padding:11px;margin-top:10px}.finish{width:100%;border:0;background:var(--accent);color:#fff;border-radius:12px;padding:13px;font-weight:700;margin-top:10px}
@@ -22,6 +22,11 @@ select,input,button{font:inherit} select,input[type=date],input[type=text],input
 .hidden{display:none} table{width:100%;border-collapse:collapse;font-size:.88rem}th,td{padding:8px 5px;border-bottom:1px solid var(--line);text-align:left}.small{font-size:.82rem;color:var(--muted)}.danger{color:var(--absent)}
 .footer{font-size:.76rem;color:var(--muted);text-align:center;padding:8px}.btnrow{display:grid;grid-template-columns:1fr 1fr;gap:8px}.note{background:#eef3f7;padding:10px;border-radius:10px;font-size:.82rem;color:#4a5a66}
 .badge{display:inline-block;padding:3px 8px;border-radius:999px;background:#eef3f7;font-size:.78rem}
+.reviewRow{display:grid;grid-template-columns:minmax(0,1fr) repeat(4,auto);gap:6px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)}
+.reviewName{font-weight:650;min-width:0}
+.mini{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 8px;font-size:.82rem}
+.mini.active{font-weight:700;outline:2px solid #9ebdf3}
+@media(max-width:480px){.stats{grid-template-columns:repeat(2,1fr)}.reviewRow{grid-template-columns:1fr repeat(2,auto)}.reviewRow .mini:nth-of-type(3),.reviewRow .mini:nth-of-type(4){margin-top:2px}}
 </style>
 </head>
 <body>
@@ -54,7 +59,8 @@ select,input,button{font:inherit} select,input[type=date],input[type=text],input
 <div class="card stats">
 <div class="stat"><span class="small">Boys</span><b id="boysStat">0/0</b></div>
 <div class="stat"><span class="small">Girls</span><b id="girlsStat">0/0</b></div>
-<div class="stat"><span class="small">Total</span><b id="totalStat">0/0</b></div>
+<div class="stat"><span class="small">Present</span><b id="totalStat">0/0</b></div>
+<div class="stat"><span class="small">Unmarked</span><b id="unmarkedStat">0</b></div>
 </div>
 
 <div class="card student">
@@ -64,7 +70,11 @@ select,input,button{font:inherit} select,input[type=date],input[type=text],input
 <button class="late" onclick="mark('L')">L Late</button>
 <button class="absent" onclick="mark('A')">0 Absent</button>
 </div>
-<button class="secondary" onclick="goBack()">← Previous student</button>
+<div class="btnrow">
+<button class="secondary" onclick="goBack()">← Previous</button>
+<button class="secondary" onclick="skipStudent()">Skip →</button>
+</div>
+<button class="secondary" onclick="openReview()">Review Attendance</button>
 <button class="finish" onclick="finishSession()">Save / Finish Session</button>
 <div class="small" id="status" style="margin-top:10px"></div>
 </div>
@@ -132,11 +142,21 @@ select,input,button{font:inherit} select,input[type=date],input[type=text],input
 </div>
 </section>
 
+
+<section id="review" class="hidden">
+<div class="card">
+<h3 style="margin-top:0">Review Attendance</h3>
+<p class="small">Tap any status to correct it. Unmarked students remain undecided and are never automatically changed to absent.</p>
+<div id="reviewList"></div>
+<button class="finish" onclick="closeReview()">Back to Roll</button>
+</div>
+</section>
+
 <div class="footer">No student names are built into this hosted app. Roster and attendance are stored locally on your device/browser.</div>
 </div>
 
 <script>
-const APP_KEY='attendance_tracker_private_v1';
+const APP_KEY='attendance_tracker_private_v1'; // keep same key so existing local data is preserved
 let state={className:'',sessionNames:['SE 1','SE 2','SE 3'],students:[],attendance:{}};
 let pendingRoster=null, idx=0, marks={};
 
@@ -155,26 +175,50 @@ function loadCurrent(){
  marks=rec?.marks||{};
  if(rec?.date)date.value=rec.date;
  noClass.checked=!!rec?.noClass;noClassReason.value=rec?.reason||'';noClassReasonWrap.classList.toggle('hidden',!noClass.checked);
- idx=0;while(idx<state.students.length&&marks[idx])idx++;if(idx>=state.students.length)idx=Math.max(0,state.students.length-1);render();
+ idx=0;while(idx<state.students.length&&marks[idx])idx++;if(idx>=state.students.length)idx=0;render();
 }
 function render(){
  const t=totals();rosterCount.textContent=`${t.t} students (${t.b} boys, ${t.g} girls)`;
  removeStudentSelect.innerHTML='';state.students.forEach((st,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${st.first} ${st.last}`;removeStudentSelect.appendChild(o)});
  document.querySelectorAll('.actions button,.student .secondary,.student .finish').forEach(b=>b.disabled=!!noClass.checked);
- if(noClass.checked){studentName.textContent='NO CLASS';studentSex.textContent=noClassReason.value.trim()||'Enter a reason above';progress.textContent=`${session.options[session.selectedIndex].text} • Week ${week.value}`;boysStat.textContent='—';girlsStat.textContent='—';totalStat.textContent='—';status.textContent='This session will be recorded as no class.';return}
- if(!state.students.length){studentName.textContent='No roster loaded';studentSex.textContent='';progress.textContent='';boysStat.textContent='0/0';girlsStat.textContent='0/0';totalStat.textContent='0/0';status.textContent='Go to Class Setup to add or upload students.';return}
+ if(noClass.checked){studentName.textContent='NO CLASS';studentSex.textContent=noClassReason.value.trim()||'Enter a reason above';progress.textContent=`${session.options[session.selectedIndex].text} • Week ${week.value}`;boysStat.textContent='—';girlsStat.textContent='—';totalStat.textContent='—';unmarkedStat.textContent='—';status.textContent='This session will be recorded as no class.';return}
+ if(!state.students.length){studentName.textContent='No roster loaded';studentSex.textContent='';progress.textContent='';boysStat.textContent='0/0';girlsStat.textContent='0/0';totalStat.textContent='0/0';unmarkedStat.textContent='0';status.textContent='Go to Class Setup to add or upload students.';return}
  const s=state.students[idx];studentName.textContent=s.first+' '+s.last;studentSex.textContent=s.sex==='B'?'Boy':'Girl';progress.textContent=`Student ${idx+1} of ${state.students.length}`;
- const bp=state.students.reduce((n,s,i)=>n+(s.sex==='B'&&(marks[i]==='P'||marks[i]==='L')),0),gp=state.students.reduce((n,s,i)=>n+(s.sex==='G'&&(marks[i]==='P'||marks[i]==='L')),0);
- boysStat.textContent=bp+'/'+t.b;girlsStat.textContent=gp+'/'+t.g;totalStat.textContent=(bp+gp)+'/'+t.t;
- status.textContent=marks[idx]?`Current mark: ${marks[idx]==='P'?'Present':marks[idx]==='L'?'Late':'Absent'}`:'';
+ const bp=state.students.reduce((n,s,i)=>n+(s.sex==='B'&&(marks[i]==='P'||marks[i]==='L')),0),
+       gp=state.students.reduce((n,s,i)=>n+(s.sex==='G'&&(marks[i]==='P'||marks[i]==='L')),0),
+       unmarked=state.students.reduce((n,s,i)=>n+(!marks[i]?1:0),0);
+ boysStat.textContent=bp+'/'+t.b;girlsStat.textContent=gp+'/'+t.g;totalStat.textContent=(bp+gp)+'/'+t.t;unmarkedStat.textContent=unmarked;
+ status.textContent=marks[idx]?`Current mark: ${marks[idx]==='P'?'Present':marks[idx]==='L'?'Late':'Absent'}`:'Current mark: Unmarked';
 }
 function persistDraft(){state.attendance[sessionKey()]={week:+week.value,session:+session.value,date:date.value,marks,noClass:!!noClass.checked,reason:noClassReason.value.trim(),complete:false};saveState()}
 function mark(v){if(noClass.checked||!state.students.length)return;marks[idx]=v;persistDraft();if(idx<state.students.length-1)idx++;render()}
 function goBack(){if(idx>0)idx--;render()}
-function finishSession(){if(noClass.checked){saveNoClass();return}const missing=state.students.filter((s,i)=>!marks[i]).length;if(missing&&!confirm(`${missing} student(s) are not marked. Save anyway?`))return;state.attendance[sessionKey()]={week:+week.value,session:+session.value,date:date.value,marks,noClass:false,reason:'',complete:missing===0};saveState();status.textContent='Session saved.';renderHistory();alert('Attendance saved.')}
+function skipStudent(){if(!state.students.length||noClass.checked)return;if(idx<state.students.length-1)idx++;render()}
+function openReview(){if(noClass.checked||!state.students.length)return;persistDraft();renderReview();take.classList.add('hidden');review.classList.remove('hidden')}
+function closeReview(){review.classList.add('hidden');take.classList.remove('hidden');render()}
+function renderReview(){
+ reviewList.innerHTML='';
+ state.students.forEach((st,i)=>{
+   const row=document.createElement('div');row.className='reviewRow';
+   const label=document.createElement('div');label.className='reviewName';label.textContent=`${i+1}. ${st.first} ${st.last}`;
+   row.appendChild(label);
+   [['P','✓'],['L','L'],['A','0'],['','—']].forEach(([v,txt])=>{
+     const b=document.createElement('button');b.className='mini'+((marks[i]||'')===v?' active':'');b.textContent=txt;
+     b.title=v==='P'?'Present':v==='L'?'Late':v==='A'?'Absent':'Unmarked';
+     b.onclick=()=>{if(v)marks[i]=v;else delete marks[i];persistDraft();renderReview();};
+     row.appendChild(b);
+   });
+   reviewList.appendChild(row);
+ });
+}
+function finishSession(){if(noClass.checked){saveNoClass();return}const missing=state.students.filter((s,i)=>!marks[i]).length;if(missing&&!confirm(`${missing} student(s) are still unmarked. They will remain unmarked, NOT absent. Save anyway?`))return;state.attendance[sessionKey()]={week:+week.value,session:+session.value,date:date.value,marks,noClass:false,reason:'',complete:missing===0};saveState();status.textContent='Session saved.';renderHistory();alert(missing?`Attendance saved with ${missing} unmarked student(s).`:'Attendance saved.')}
 function saveNoClass(){const reason=noClassReason.value.trim();if(!reason){alert('Please enter a reason for no class.');return}state.attendance[sessionKey()]={week:+week.value,session:+session.value,date:date.value,marks:{},noClass:true,reason,complete:true};saveState();marks={};render();renderHistory();alert('No class saved.')}
-function showTab(tab){take.classList.toggle('hidden',tab!=='take');term.classList.toggle('hidden',tab!=='term');setup.classList.toggle('hidden',tab!=='setup');takeTab.classList.toggle('active',tab==='take');termTab.classList.toggle('active',tab==='term');setupTab.classList.toggle('active',tab==='setup');if(tab==='term')renderHistory()}
-function renderHistory(){historyBody.innerHTML='';const t=totals();for(let w=1;w<=11;w++)for(let s=1;s<=3;s++){const r=state.attendance[`W${w}S${s}`];if(!r)continue;let bp=0,gp=0;state.students.forEach((st,i)=>{if(r.marks?.[i]==='P'||r.marks?.[i]==='L')st.sex==='B'?bp++:gp++});const tr=document.createElement('tr');const statusText=r.noClass?`No Class: ${r.reason||''}`:'';tr.innerHTML=`<td>${w}</td><td>${state.sessionNames[s-1]||('SE '+s)}</td><td>${r.date||''}</td><td>${r.noClass?'—':bp+'/'+t.b}</td><td>${r.noClass?'—':gp+'/'+t.g}</td><td>${r.noClass?'—':(bp+gp)+'/'+t.t}</td><td>${statusText}</td>`;tr.onclick=()=>{week.value=w;session.value=s;loadCurrent();showTab('take')};historyBody.appendChild(tr)}if(!historyBody.children.length)historyBody.innerHTML='<tr><td colspan="7" class="small">No sessions saved yet.</td></tr>'}
+function showTab(tab){
+ take.classList.toggle('hidden',tab!=='take');term.classList.toggle('hidden',tab!=='term');setup.classList.toggle('hidden',tab!=='setup');review.classList.add('hidden');
+ takeTab.classList.toggle('active',tab==='take');termTab.classList.toggle('active',tab==='term');setupTab.classList.toggle('active',tab==='setup');
+ if(tab==='term')renderHistory()
+}
+function renderHistory(){historyBody.innerHTML='';const t=totals();for(let w=1;w<=11;w++)for(let s=1;s<=3;s++){const r=state.attendance[`W${w}S${s}`];if(!r)continue;let bp=0,gp=0,unmarked=0;state.students.forEach((st,i)=>{if(r.marks?.[i]==='P'||r.marks?.[i]==='L')st.sex==='B'?bp++:gp++;if(!r.marks?.[i])unmarked++});const tr=document.createElement('tr');const statusText=r.noClass?`No Class: ${r.reason||''}`:(unmarked?`${unmarked} unmarked`:'Complete');tr.innerHTML=`<td>${w}</td><td>${state.sessionNames[s-1]||('SE '+s)}</td><td>${r.date||''}</td><td>${r.noClass?'—':bp+'/'+t.b}</td><td>${r.noClass?'—':gp+'/'+t.g}</td><td>${r.noClass?'—':(bp+gp)+'/'+t.t}</td><td>${statusText}</td>`;tr.onclick=()=>{week.value=w;session.value=s;loadCurrent();showTab('take')};historyBody.appendChild(tr)}if(!historyBody.children.length)historyBody.innerHTML='<tr><td colspan="7" class="small">No sessions saved yet.</td></tr>'}
 function csvEscape(v){return `"${String(v??'').replaceAll('"','""')}"`}
 function downloadBlob(content,type,filename){const blob=new Blob([content],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;a.style.display='none';document.body.appendChild(a);a.click();setTimeout(()=>{a.remove();URL.revokeObjectURL(url)},1500)}
 function exportTermCSV(){
