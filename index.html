@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#1f6feb">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Attendance Tracker</title>
+<style>
+:root{--bg:#f4f6f8;--card:#fff;--text:#14202b;--muted:#667784;--accent:#1f6feb;--present:#1f8f4e;--late:#c47a00;--absent:#c0392b;--line:#dbe2e8}
+*{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
+.wrap{max-width:700px;margin:0 auto;padding:14px} h1{font-size:1.25rem;margin:4px 0 12px}
+.card{background:var(--card);border-radius:16px;padding:14px;box-shadow:0 2px 10px rgba(0,0,0,.07);margin-bottom:12px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px} label{font-size:.8rem;color:var(--muted);display:block;margin-bottom:4px}
+select,input,button{font:inherit} select,input[type=date],input[type=text],input[type=file]{width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;background:#fff}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center}.stat{background:#eef3f7;border-radius:12px;padding:9px 4px}.stat b{display:block;font-size:1.1rem}
+.student{text-align:center;padding:8px 0 4px}.count{font-size:.85rem;color:var(--muted);margin-bottom:8px}.name{font-size:1.8rem;font-weight:750;line-height:1.15;margin:10px 0 4px}.sex{color:var(--muted);font-size:.9rem}
+.actions{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:18px}.actions button{border:0;color:#fff;border-radius:14px;padding:19px 6px;font-size:1.1rem;font-weight:700}.present{background:var(--present)}.late{background:var(--late)}.absent{background:var(--absent)}
+.secondary{width:100%;border:1px solid var(--line);background:#fff;border-radius:10px;padding:11px;margin-top:10px}.finish{width:100%;border:0;background:var(--accent);color:#fff;border-radius:12px;padding:13px;font-weight:700;margin-top:10px}
+.tabs{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}.tabs button{flex:1 1 30%;padding:10px;border:1px solid var(--line);background:#fff;border-radius:10px}.tabs button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.hidden{display:none} table{width:100%;border-collapse:collapse;font-size:.88rem}th,td{padding:8px 5px;border-bottom:1px solid var(--line);text-align:left}.small{font-size:.82rem;color:var(--muted)}.danger{color:var(--absent)}
+.footer{font-size:.76rem;color:var(--muted);text-align:center;padding:8px}.btnrow{display:grid;grid-template-columns:1fr 1fr;gap:8px}.note{background:#eef3f7;padding:10px;border-radius:10px;font-size:.82rem;color:#4a5a66}
+.badge{display:inline-block;padding:3px 8px;border-radius:999px;background:#eef3f7;font-size:.78rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1 id="appTitle">Attendance Tracker</h1>
+<div class="tabs">
+<button id="takeTab" class="active" onclick="showTab('take')">Take Attendance</button>
+<button id="termTab" onclick="showTab('term')">Term Record</button>
+<button id="setupTab" onclick="showTab('setup')">Class Setup</button>
+</div>
+
+<section id="take">
+<div class="card">
+<div class="grid">
+<div><label>Week</label><select id="week"></select></div>
+<div><label>Session</label><select id="session"><option value="1">SE 1</option><option value="2">SE 2</option><option value="3">SE 3</option></select></div>
+</div>
+<div style="margin-top:10px"><label>Date</label><input id="date" type="date"></div>
+<div style="margin-top:12px">
+<label style="display:flex;align-items:center;gap:8px;font-size:.95rem;color:var(--text)">
+<input id="noClass" type="checkbox" style="width:auto"> No class / teacher absent
+</label>
+</div>
+<div id="noClassReasonWrap" class="hidden" style="margin-top:10px">
+<label>Reason</label><input id="noClassReason" type="text" placeholder="e.g. Teacher absent, public holiday, school activity">
+<button class="finish" onclick="saveNoClass()">Save No Class</button>
+</div>
+</div>
+
+<div class="card stats">
+<div class="stat"><span class="small">Boys</span><b id="boysStat">0/0</b></div>
+<div class="stat"><span class="small">Girls</span><b id="girlsStat">0/0</b></div>
+<div class="stat"><span class="small">Total</span><b id="totalStat">0/0</b></div>
+</div>
+
+<div class="card student">
+<div class="count" id="progress"></div><div class="name" id="studentName">No roster loaded</div><div class="sex" id="studentSex"></div>
+<div class="actions">
+<button class="present" onclick="mark('P')">✓ Present</button>
+<button class="late" onclick="mark('L')">L Late</button>
+<button class="absent" onclick="mark('A')">0 Absent</button>
+</div>
+<button class="secondary" onclick="goBack()">← Previous student</button>
+<button class="finish" onclick="finishSession()">Save / Finish Session</button>
+<div class="small" id="status" style="margin-top:10px"></div>
+</div>
+</section>
+
+<section id="term" class="hidden">
+<div class="card">
+<div class="btnrow">
+<button class="secondary" style="margin:0" onclick="exportTermCSV()">Export Term CSV</button>
+<button class="secondary" style="margin:0" onclick="exportBackup()">Backup App Data</button>
+</div>
+<p class="small">CSV uses WEEK headings with your three session names underneath. Backup App Data saves roster, session names, attendance and no-class reasons as a JSON file.</p>
+</div>
+<div class="card" style="overflow:auto">
+<table><thead><tr><th>Week</th><th>Session</th><th>Date</th><th>Boys</th><th>Girls</th><th>Total</th><th>Status/Reason</th></tr></thead><tbody id="historyBody"></tbody></table>
+</div>
+</section>
+
+<section id="setup" class="hidden">
+<div class="card">
+<h3 style="margin-top:0">Class Details</h3>
+<label>Class name</label><input id="classNameInput" type="text" placeholder="e.g. Class 1.2">
+<button class="finish" onclick="saveClassName()">Save Class Name</button>
+</div>
+
+<div class="card">
+<h3 style="margin-top:0">Session Names</h3>
+<div class="grid">
+<div><label>Session 1</label><input id="sessionName1" type="text" value="SE 1"></div>
+<div><label>Session 2</label><input id="sessionName2" type="text" value="SE 2"></div>
+</div>
+<div style="margin-top:10px"><label>Session 3</label><input id="sessionName3" type="text" value="SE 3"></div>
+<button class="finish" onclick="applySessionNames()">Apply Session Names</button>
+</div>
+
+<div class="card">
+<h3 style="margin-top:0">Roster</h3>
+<p class="small">Student data stays on this device. Recommended CSV columns: Firstname, Lastname, Sex. Sex can be B/G or M/F.</p>
+<label>Upload roster</label><input id="rosterFile" type="file" accept=".csv,.txt,text/csv,text/plain">
+<div class="btnrow" style="margin-top:10px">
+<button class="secondary" style="margin:0" onclick="downloadRosterTemplate()">Roster Template</button>
+<button class="secondary" style="margin:0" onclick="applyUploadedRoster()">Use Uploaded Roster</button>
+</div>
+<div id="rosterPreview" class="note" style="margin-top:10px">Current roster: <span id="rosterCount">0 students</span></div>
+</div>
+
+<div class="card">
+<h3 style="margin-top:0">Add / Remove Student</h3>
+<div class="grid">
+<div><label>First name</label><input id="newFirst" type="text"></div>
+<div><label>Last name</label><input id="newLast" type="text"></div>
+</div>
+<div style="margin-top:10px"><label>Sex</label><select id="newSex"><option value="B">Boy</option><option value="G">Girl</option></select></div>
+<button class="finish" onclick="addStudent()">Add Student</button>
+<div style="margin-top:12px"><label>Remove student</label><select id="removeStudentSelect"></select></div>
+<button class="secondary danger" onclick="removeSelectedStudent()">Remove Selected Student</button>
+</div>
+
+<div class="card">
+<h3 style="margin-top:0">Restore / Reset</h3>
+<label>Restore backup</label><input id="backupFile" type="file" accept=".json,application/json">
+<button class="secondary" onclick="restoreBackup()">Restore Backup</button>
+<button class="secondary danger" onclick="resetEverything()">Reset This App</button>
+<p class="small">Reset removes the roster and attendance stored on this device only. It does not affect the hosted app.</p>
+</div>
+</section>
+
+<div class="footer">No student names are built into this hosted app. Roster and attendance are stored locally on your device/browser.</div>
+</div>
+
+<script>
+const APP_KEY='attendance_tracker_private_v1';
+let state={className:'',sessionNames:['SE 1','SE 2','SE 3'],students:[],attendance:{}};
+let pendingRoster=null, idx=0, marks={};
+
+function saveState(){localStorage.setItem(APP_KEY,JSON.stringify(state))}
+function loadState(){try{const s=JSON.parse(localStorage.getItem(APP_KEY)||'null');if(s)state=s}catch(e){}}
+function sessionKey(){return `W${week.value}S${session.value}`}
+function totals(){let b=0,g=0;state.students.forEach(s=>s.sex==='B'?b++:g++);return {b,g,t:b+g}}
+function refreshHeader(){appTitle.textContent=(state.className||'Attendance Tracker')+(state.className?' Attendance':'');classNameInput.value=state.className||''}
+function refreshSessionLabels(){[...session.options].forEach((o,i)=>o.textContent=state.sessionNames[i]||`SE ${i+1}`);sessionName1.value=state.sessionNames[0]||'SE 1';sessionName2.value=state.sessionNames[1]||'SE 2';sessionName3.value=state.sessionNames[2]||'SE 3'}
+
+for(let w=1;w<=11;w++){let o=document.createElement('option');o.value=w;o.textContent='Week '+w;week.appendChild(o)}
+date.value=new Date().toISOString().slice(0,10);
+
+function loadCurrent(){
+ const rec=state.attendance[sessionKey()];
+ marks=rec?.marks||{};
+ if(rec?.date)date.value=rec.date;
+ noClass.checked=!!rec?.noClass;noClassReason.value=rec?.reason||'';noClassReasonWrap.classList.toggle('hidden',!noClass.checked);
+ idx=0;while(idx<state.students.length&&marks[idx])idx++;if(idx>=state.students.length)idx=Math.max(0,state.students.length-1);render();
+}
+function render(){
+ const t=totals();rosterCount.textContent=`${t.t} students (${t.b} boys, ${t.g} girls)`;
+ removeStudentSelect.innerHTML='';state.students.forEach((st,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${st.first} ${st.last}`;removeStudentSelect.appendChild(o)});
+ document.querySelectorAll('.actions button,.student .secondary,.student .finish').forEach(b=>b.disabled=!!noClass.checked);
+ if(noClass.checked){studentName.textContent='NO CLASS';studentSex.textContent=noClassReason.value.trim()||'Enter a reason above';progress.textContent=`${session.options[session.selectedIndex].text} • Week ${week.value}`;boysStat.textContent='—';girlsStat.textContent='—';totalStat.textContent='—';status.textContent='This session will be recorded as no class.';return}
+ if(!state.students.length){studentName.textContent='No roster loaded';studentSex.textContent='';progress.textContent='';boysStat.textContent='0/0';girlsStat.textContent='0/0';totalStat.textContent='0/0';status.textContent='Go to Class Setup to add or upload students.';return}
+ const s=state.students[idx];studentName.textContent=s.first+' '+s.last;studentSex.textContent=s.sex==='B'?'Boy':'Girl';progress.textContent=`Student ${idx+1} of ${state.students.length}`;
+ const bp=state.students.reduce((n,s,i)=>n+(s.sex==='B'&&(marks[i]==='P'||marks[i]==='L')),0),gp=state.students.reduce((n,s,i)=>n+(s.sex==='G'&&(marks[i]==='P'||marks[i]==='L')),0);
+ boysStat.textContent=bp+'/'+t.b;girlsStat.textContent=gp+'/'+t.g;totalStat.textContent=(bp+gp)+'/'+t.t;
+ status.textContent=marks[idx]?`Current mark: ${marks[idx]==='P'?'Present':marks[idx]==='L'?'Late':'Absent'}`:'';
+}
+function persistDraft(){state.attendance[sessionKey()]={week:+week.value,session:+session.value,date:date.value,marks,noClass:!!noClass.checked,reason:noClassReason.value.trim(),complete:false};saveState()}
+function mark(v){if(noClass.checked||!state.students.length)return;marks[idx]=v;persistDraft();if(idx<state.students.length-1)idx++;render()}
+function goBack(){if(idx>0)idx--;render()}
+function finishSession(){if(noClass.checked){saveNoClass();return}const missing=state.students.filter((s,i)=>!marks[i]).length;if(missing&&!confirm(`${missing} student(s) are not marked. Save anyway?`))return;state.attendance[sessionKey()]={week:+week.value,session:+session.value,date:date.value,marks,noClass:false,reason:'',complete:missing===0};saveState();status.textContent='Session saved.';renderHistory();alert('Attendance saved.')}
+function saveNoClass(){const reason=noClassReason.value.trim();if(!reason){alert('Please enter a reason for no class.');return}state.attendance[sessionKey()]={week:+week.value,session:+session.value,date:date.value,marks:{},noClass:true,reason,complete:true};saveState();marks={};render();renderHistory();alert('No class saved.')}
+function showTab(tab){take.classList.toggle('hidden',tab!=='take');term.classList.toggle('hidden',tab!=='term');setup.classList.toggle('hidden',tab!=='setup');takeTab.classList.toggle('active',tab==='take');termTab.classList.toggle('active',tab==='term');setupTab.classList.toggle('active',tab==='setup');if(tab==='term')renderHistory()}
+function renderHistory(){historyBody.innerHTML='';const t=totals();for(let w=1;w<=11;w++)for(let s=1;s<=3;s++){const r=state.attendance[`W${w}S${s}`];if(!r)continue;let bp=0,gp=0;state.students.forEach((st,i)=>{if(r.marks?.[i]==='P'||r.marks?.[i]==='L')st.sex==='B'?bp++:gp++});const tr=document.createElement('tr');const statusText=r.noClass?`No Class: ${r.reason||''}`:'';tr.innerHTML=`<td>${w}</td><td>${state.sessionNames[s-1]||('SE '+s)}</td><td>${r.date||''}</td><td>${r.noClass?'—':bp+'/'+t.b}</td><td>${r.noClass?'—':gp+'/'+t.g}</td><td>${r.noClass?'—':(bp+gp)+'/'+t.t}</td><td>${statusText}</td>`;tr.onclick=()=>{week.value=w;session.value=s;loadCurrent();showTab('take')};historyBody.appendChild(tr)}if(!historyBody.children.length)historyBody.innerHTML='<tr><td colspan="7" class="small">No sessions saved yet.</td></tr>'}
+function csvEscape(v){return `"${String(v??'').replaceAll('"','""')}"`}
+function downloadBlob(content,type,filename){const blob=new Blob([content],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;a.style.display='none';document.body.appendChild(a);a.click();setTimeout(()=>{a.remove();URL.revokeObjectURL(url)},1500)}
+function exportTermCSV(){
+ const row1=['First Name','Last Name','Sex'],row2=['','',''],row3=['NO CLASS / REASON','',''];
+ for(let w=1;w<=11;w++){row1.push(`WEEK ${w}`,'','');row2.push(state.sessionNames[0]||'SE 1',state.sessionNames[1]||'SE 2',state.sessionNames[2]||'SE 3');for(let s=1;s<=3;s++){const rec=state.attendance[`W${w}S${s}`];row3.push(rec?.noClass?`NO CLASS: ${rec.reason||''}`:'')}}
+ const rows=[row1,row2,row3],displayMark=m=>m==='P'?'✓':m==='A'?'0':m==='L'?'L':'';
+ state.students.forEach((st,i)=>{const r=[st.first,st.last,st.sex];for(let w=1;w<=11;w++)for(let s=1;s<=3;s++){const rec=state.attendance[`W${w}S${s}`];r.push(rec?.noClass?'NC':displayMark(rec?.marks?.[i]||''))}rows.push(r)});
+ const csv=rows.map(r=>r.map(csvEscape).join(',')).join('\n');const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);downloadBlob(csv,'text/csv;charset=utf-8',`${(state.className||'class').replace(/[^a-z0-9]+/gi,'_')}_Term_Attendance_${stamp}.csv`)
+}
+function parseRoster(text){const lines=text.replace(/\r/g,'').split('\n').map(x=>x.trim()).filter(Boolean);if(!lines.length)return[];const splitLine=line=>line.includes(',')?line.split(',').map(x=>x.trim().replace(/^"|"$/g,'')):line.split(/\t|\s{2,}/).map(x=>x.trim());let rows=lines.map(splitLine);let start=0,header=rows[0].map(x=>x.toLowerCase());if(header.some(x=>x.includes('first')||x.includes('last')||x==='name'||x==='sex'||x==='gender'))start=1;const out=[];for(let i=start;i<rows.length;i++){let r=rows[i],first='',last='',sex='';if(r.length>=3){first=r[0];last=r[1];sex=r[2]}else if(r.length===2){if(/^(b|g|m|f|boy|girl|male|female)$/i.test(r[1])){let parts=r[0].split(/\s+/);first=parts.shift()||'';last=parts.join(' ');sex=r[1]}else{first=r[0];last=r[1]}}else{let parts=r[0].split(/\s+/);first=parts.shift()||'';last=parts.join(' ')}sex=String(sex).trim().toUpperCase();if(['M','MALE','BOY'].includes(sex))sex='B';if(['F','FEMALE','GIRL'].includes(sex))sex='G';if(!['B','G'].includes(sex))sex='G';if(first||last)out.push({first,last,sex})}return out}
+rosterFile.addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;const reader=new FileReader();reader.onload=()=>{pendingRoster=parseRoster(reader.result);const b=pendingRoster.filter(s=>s.sex==='B').length,g=pendingRoster.length-b;rosterPreview.textContent=`Uploaded roster ready: ${pendingRoster.length} students (${b} boys, ${g} girls)`};reader.readAsText(f)});
+function applyUploadedRoster(){if(!pendingRoster?.length){alert('Choose a roster file first.');return}if(state.students.length&&Object.keys(state.attendance).length&&!confirm('Replacing the roster can affect old attendance alignment. Continue?'))return;state.students=pendingRoster;state.attendance={};marks={};idx=0;saveState();render();alert('Roster loaded and stored only on this device.')}
+function downloadRosterTemplate(){downloadBlob('Firstname,Lastname,Sex\nJohn,Doe,B\nJane,Smith,G\n','text/csv;charset=utf-8','attendance_roster_template.csv')}
+function addStudent(){const first=(newFirst.value||'').trim(),last=(newLast.value||'').trim(),sex=newSex.value;if(!first&&!last){alert('Enter a student name first.');return}state.students.push({first,last,sex});newFirst.value='';newLast.value='';saveState();render();alert('Student added.')}
+function removeSelectedStudent(){if(!state.students.length)return;const i=+removeStudentSelect.value,st=state.students[i];if(!st)return;if(!confirm(`Remove ${st.first} ${st.last}? Export a backup first if this student has past attendance.`))return;state.students.splice(i,1);state.attendance={};marks={};idx=0;saveState();render();renderHistory();alert('Student removed. Existing attendance was cleared to avoid mismatched records.')}
+function saveClassName(){state.className=classNameInput.value.trim();saveState();refreshHeader();alert('Class name saved.')}
+function applySessionNames(){state.sessionNames=[(sessionName1.value||'SE 1').trim()||'SE 1',(sessionName2.value||'SE 2').trim()||'SE 2',(sessionName3.value||'SE 3').trim()||'SE 3'];saveState();refreshSessionLabels();renderHistory();alert('Session names updated.')}
+function exportBackup(){const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);downloadBlob(JSON.stringify(state,null,2),'application/json',`${(state.className||'attendance').replace(/[^a-z0-9]+/gi,'_')}_Backup_${stamp}.json`)}
+function restoreBackup(){const f=backupFile.files[0];if(!f){alert('Choose a backup JSON file first.');return}const reader=new FileReader();reader.onload=()=>{try{const s=JSON.parse(reader.result);if(!Array.isArray(s.students)||!s.attendance)throw new Error();state=s;saveState();refreshHeader();refreshSessionLabels();marks={};idx=0;loadCurrent();renderHistory();alert('Backup restored.')}catch(e){alert('That backup file could not be read.')}};reader.readAsText(f)}
+function resetEverything(){if(!confirm('Remove the roster and ALL attendance stored in this browser?'))return;localStorage.removeItem(APP_KEY);state={className:'',sessionNames:['SE 1','SE 2','SE 3'],students:[],attendance:{}};marks={};idx=0;refreshHeader();refreshSessionLabels();loadCurrent();renderHistory()}
+week.onchange=loadCurrent;session.onchange=loadCurrent;date.onchange=persistDraft;noClass.onchange=()=>{noClassReasonWrap.classList.toggle('hidden',!noClass.checked);persistDraft();render()};noClassReason.oninput=()=>{persistDraft();render()};
+loadState();refreshHeader();refreshSessionLabels();loadCurrent();renderHistory();
+
+if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}))}
+</script>
+</body>
+</html>
