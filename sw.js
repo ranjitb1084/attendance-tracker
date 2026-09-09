@@ -1,44 +1,36 @@
-const CACHE='attendance-tracker-v11';
+const CACHE='attendance-tracker-v12';
 const ASSETS=['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 
 self.addEventListener('install', event => {
   self.skipWaiting();
-  event.waitUntil(
-    caches.open(CACHE).then(cache => cache.addAll(ASSETS))
-  );
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));
 });
 
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
 });
 
 self.addEventListener('fetch', event => {
-  const req = event.request;
-
-  // For page/navigation requests, prefer the network so updates appear quickly.
-  if (req.mode === 'navigate') {
+  const req=event.request;
+  if(req.mode==='navigate'){
     event.respondWith(
-      fetch(req)
-        .then(resp => {
-          const copy = resp.clone();
-          caches.open(CACHE).then(cache => cache.put('./index.html', copy));
-          return resp;
-        })
-        .catch(() => caches.match('./index.html'))
+      fetch(req).then(resp=>{
+        const copy=resp.clone();
+        caches.open(CACHE).then(cache=>cache.put('./index.html',copy));
+        return resp;
+      }).catch(()=>caches.match('./index.html'))
     );
     return;
   }
-
-  // For other assets, use cache first, then network.
   event.respondWith(
     caches.match(req).then(cached =>
-      cached || fetch(req).then(resp => {
-        const copy = resp.clone();
-        caches.open(CACHE).then(cache => cache.put(req, copy));
+      cached || fetch(req).then(resp=>{
+        const copy=resp.clone();
+        caches.open(CACHE).then(cache=>cache.put(req,copy));
         return resp;
       })
     )

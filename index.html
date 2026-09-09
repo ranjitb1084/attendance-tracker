@@ -39,7 +39,7 @@ select,input,button{font:inherit} select,input[type=date],input[type=text],input
 <div><button class="secondary" style="margin:0" onclick="showTab('setup')">Manage Classes</button></div>
 </div>
 <div id="activeClassStatus" class="note" style="margin-top:10px;font-weight:700">Active class: —</div>
-<div id="takeRosterStatus" class="note" style="margin-top:6px">No roster loaded for this class.</div>
+<div id="takeRosterStatus" class="small" style="margin-top:6px">No roster loaded for this class.</div>
 </div>
 <div class="tabs">
 <button id="takeTab" class="active" onclick="showTab('take')">Take Attendance</button>
@@ -96,7 +96,7 @@ select,input,button{font:inherit} select,input[type=date],input[type=text],input
 <button class="secondary" style="margin:0" onclick="exportBackup()">Backup This Class</button>
 </div>
 <button class="secondary" onclick="exportAllClassesBackup()">Backup All Classes</button>
-<p class="small">CSV exports only the selected class. Backup This Class saves the selected class only. Backup All Classes saves every class stored in this app.</p>
+<p class="small">CSV exports only the selected class. “Backup This Class” saves the selected class. “Backup All Classes” saves every class in this app.</p>
 <p id="lastBackupInfo" class="note">Last backup: None yet</p>
 </div>
 <div class="card" style="overflow:auto">
@@ -113,7 +113,7 @@ select,input,button{font:inherit} select,input[type=date],input[type=text],input
 <label>Add new class</label><input id="newClassNameInput" type="text" placeholder="e.g. 1.4 Integrated Science">
 <button class="secondary" onclick="addNewClass()">Add New Class</button>
 <button class="secondary danger" onclick="deleteCurrentClass()">Delete Current Class</button>
-<p class="small">Each class has its own roster, attendance, session names and backup history.</p>
+<p class="small">Every class has its own roster, attendance, session names and backup history.</p>
 </div>
 
 <div class="card">
@@ -136,7 +136,6 @@ select,input,button{font:inherit} select,input[type=date],input[type=text],input
 </div>
 <div id="rosterPreview" class="note" style="margin-top:10px">
 <div id="rosterCurrentStatus">Current roster: 0 students</div>
-<div id="classSavedStatus" class="small" style="margin-top:4px">Saved locally.</div>
 <div id="rosterUploadStatus" class="small" style="margin-top:6px">No roster file selected.</div>
 </div>
 </div>
@@ -158,7 +157,7 @@ select,input,button{font:inherit} select,input[type=date],input[type=text],input
 <label>Restore backup</label><input id="backupFile" type="file" accept=".json,application/json">
 <button class="secondary" onclick="restoreBackup()">Restore Backup</button>
 <button class="secondary danger" onclick="resetEverything()">Reset This App</button>
-<p class="small">Restore accepts either a single-class backup or an all-classes backup. Reset removes every locally stored class and attendance record from this device only.</p>
+<p class="small">Restore accepts a single-class backup or an all-classes backup. Reset removes all locally stored classes and attendance from this device.</p>
 </div>
 </section>
 
@@ -177,173 +176,125 @@ select,input,button{font:inherit} select,input[type=date],input[type=text],input
 
 <script>
 const LEGACY_KEY='attendance_tracker_private_v1';
-const DB_KEY='attendance_tracker_multiclass_v1';
+const OLD_MULTI_KEY='attendance_tracker_multiclass_v1';
+const DB_KEY='attendance_tracker_multiclass_v2';
 
 function blankClass(name=''){
- return {className:name,sessionNames:['SE 1','SE 2','SE 3'],students:[],attendance:{},lastBackupWeek:0,lastBackupDate:''};
-}
-
-let db={activeClassId:'',classes:{}};
-let state=blankClass('');
-let pendingRoster=null, idx=0, marks={};
-
-function makeClassId(){
- return 'class_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);
+ return {
+   className:name,
+   sessionNames:['SE 1','SE 2','SE 3'],
+   students:[],
+   attendance:{},
+   lastBackupWeek:0,
+   lastBackupDate:''
+ };
 }
 
 function normalizeClass(s){
- if(!s || typeof s!=='object')s=blankClass('');
- if(!Array.isArray(s.sessionNames))s.sessionNames=['SE 1','SE 2','SE 3'];
- if(!Array.isArray(s.students))s.students=[];
- if(!s.attendance || typeof s.attendance!=='object')s.attendance={};
- if(typeof s.lastBackupWeek!=='number')s.lastBackupWeek=0;
- if(!s.lastBackupDate)s.lastBackupDate='';
- if(typeof s.className!=='string')s.className='';
- return s;
+ const c=(s && typeof s==='object') ? s : blankClass('');
+ if(typeof c.className!=='string')c.className='';
+ if(!Array.isArray(c.sessionNames))c.sessionNames=['SE 1','SE 2','SE 3'];
+ if(!Array.isArray(c.students))c.students=[];
+ if(!c.attendance || typeof c.attendance!=='object')c.attendance={};
+ if(typeof c.lastBackupWeek!=='number')c.lastBackupWeek=0;
+ if(!c.lastBackupDate)c.lastBackupDate='';
+ return c;
 }
 
-function cloneClassData(s){
- return JSON.parse(JSON.stringify(normalizeClass(s)));
-}
+function clone(v){return JSON.parse(JSON.stringify(v))}
+function makeClassId(){return 'class_'+Date.now()+'_'+Math.random().toString(36).slice(2,8)}
 
-function saveDatabase(){
- if(db.activeClassId && db.classes[db.activeClassId]){
-   db.classes[db.activeClassId]=cloneClassData(state);
- }
+let db={activeClassId:'',classes:{}};
+let state=blankClass('');
+let pendingRoster=null;
+let idx=0;
+let marks={};
+
+function saveDbOnly(){
  localStorage.setItem(DB_KEY,JSON.stringify(db));
 }
 
-function saveState(){
- saveDatabase();
- // Re-bind state to the freshly stored class object so each class remains isolated.
- state=db.classes[db.activeClassId];
+function persistActive(){
+ if(db.activeClassId){
+   db.classes[db.activeClassId]=clone(normalizeClass(state));
+ }
+ saveDbOnly();
 }
 
-function loadState(){
+function migrateIfNeeded(){
+ // Prefer the new clean database.
  try{
-   const existing=JSON.parse(localStorage.getItem(DB_KEY)||'null');
-   if(existing && existing.classes && typeof existing.classes==='object'){
-     db=existing;
-     Object.keys(db.classes).forEach(id=>db.classes[id]=normalizeClass(db.classes[id]));
-   }else{
-     const legacy=JSON.parse(localStorage.getItem(LEGACY_KEY)||'null');
-     if(legacy && Array.isArray(legacy.students)){
-       const id=makeClassId();
-       db={activeClassId:id,classes:{[id]:normalizeClass(legacy)}};
-     }else{
-       const id=makeClassId();
-       db={activeClassId:id,classes:{[id]:blankClass('')}};
-     }
+   const current=JSON.parse(localStorage.getItem(DB_KEY)||'null');
+   if(current?.classes && Object.keys(current.classes).length){
+     db=current;
+     return;
    }
-   if(!db.activeClassId || !db.classes[db.activeClassId]){
-     const ids=Object.keys(db.classes);
-     db.activeClassId=ids[0]||makeClassId();
-     if(!db.classes[db.activeClassId])db.classes[db.activeClassId]=blankClass('');
+ }catch(e){}
+
+ // Migrate the earlier multiclass version if it exists.
+ try{
+   const old=JSON.parse(localStorage.getItem(OLD_MULTI_KEY)||'null');
+   if(old?.classes && Object.keys(old.classes).length){
+     db={activeClassId:old.activeClassId||'',classes:{}};
+     Object.entries(old.classes).forEach(([id,c])=>db.classes[id]=clone(normalizeClass(c)));
+     return;
    }
-   state=db.classes[db.activeClassId];
-   saveDatabase();
- }catch(e){
+ }catch(e){}
+
+ // Migrate original single-class app.
+ try{
+   const legacy=JSON.parse(localStorage.getItem(LEGACY_KEY)||'null');
+   if(legacy && Array.isArray(legacy.students)){
+     const id=makeClassId();
+     db={activeClassId:id,classes:{[id]:clone(normalizeClass(legacy))}};
+     return;
+   }
+ }catch(e){}
+
+ const id=makeClassId();
+ db={activeClassId:id,classes:{[id]:blankClass('')}};
+}
+
+function loadApp(){
+ migrateIfNeeded();
+ const ids=Object.keys(db.classes);
+ if(!ids.length){
    const id=makeClassId();
    db={activeClassId:id,classes:{[id]:blankClass('')}};
-   state=db.classes[id];
-   saveDatabase();
  }
+ if(!db.activeClassId || !db.classes[db.activeClassId])db.activeClassId=Object.keys(db.classes)[0];
+ Object.keys(db.classes).forEach(id=>db.classes[id]=clone(normalizeClass(db.classes[id])));
+ state=clone(db.classes[db.activeClassId]);
+ persistActive();
 }
 
-function totals(){let b=0,g=0;state.students.forEach(s=>s.sex==='B'?b++:g++);return {b,g,t:b+g}}
+function totals(){
+ let b=0,g=0;
+ state.students.forEach(s=>s.sex==='B'?b++:g++);
+ return {b,g,t:b+g};
+}
+
+function sessionKey(){return `W${week.value}S${session.value}`}
+
+function refreshClassSelector(){
+ classSelector.innerHTML='';
+ Object.entries(db.classes).forEach(([id,c])=>{
+   const o=document.createElement('option');
+   o.value=id;
+   const count=Array.isArray(c.students)?c.students.length:0;
+   o.textContent=`${c.className||'Unnamed Class'} (${count})`;
+   o.selected=id===db.activeClassId;
+   classSelector.appendChild(o);
+ });
+}
+
 function refreshHeader(){
  appTitle.textContent=(state.className||'Attendance Tracker')+(state.className?' Attendance':'');
  classNameInput.value=state.className||'';
  refreshClassSelector();
 }
-function refreshClassSelector(){
- if(!window.classSelector)return;
- classSelector.innerHTML='';
- Object.entries(db.classes).forEach(([id,c])=>{
-   const o=document.createElement('option');
-   o.value=id;o.textContent=c.className||'Unnamed Class';o.selected=id===db.activeClassId;
-   classSelector.appendChild(o);
- });
-}
-function switchClass(id){
- if(!db.classes[id])return;
 
- // Save the class we are leaving as an independent snapshot.
- if(db.activeClassId && db.classes[db.activeClassId]){
-   db.classes[db.activeClassId]=cloneClassData(state);
- }
- localStorage.setItem(DB_KEY,JSON.stringify(db));
-
- // Load the selected class as its own independent object.
- db.activeClassId=id;
- state=cloneClassData(db.classes[id]);
- db.classes[id]=cloneClassData(state);
-
- pendingRoster=null;
- marks={};
- idx=0;
- noClass.checked=false;
- noClassReason.value='';
- noClassReasonWrap.classList.add('hidden');
-
- refreshHeader();
- refreshSessionLabels();
- refreshBackupInfo();
- loadCurrent();
- renderHistory();
-
- if(!review.classList.contains('hidden')){
-   renderReview();
- }
-
- saveDatabase();
- state=db.classes[db.activeClassId];
-}
-function addNewClass(){
- const name=(newClassNameInput.value||'').trim();
- if(!name){alert('Enter a class name first.');return}
-
- // Persist the current class before creating another class.
- if(db.activeClassId && db.classes[db.activeClassId]){
-   db.classes[db.activeClassId]=cloneClassData(state);
- }
- localStorage.setItem(DB_KEY,JSON.stringify(db));
-
- const id=makeClassId();
- db.classes[id]=blankClass(name);
- db.activeClassId=id;
- state=cloneClassData(db.classes[id]);
- db.classes[id]=cloneClassData(state);
-
- newClassNameInput.value='';
- pendingRoster=null;
- marks={};
- idx=0;
- noClass.checked=false;
- noClassReason.value='';
- noClassReasonWrap.classList.add('hidden');
-
- saveDatabase();
- state=db.classes[db.activeClassId];
- refreshHeader();
- refreshSessionLabels();
- refreshBackupInfo();
- loadCurrent();
- renderHistory();
- alert(`${name} added. Your previous class has been saved. You can now upload this class’s roster.`);
-}
-function deleteCurrentClass(){
- const ids=Object.keys(db.classes);
- if(ids.length<=1){alert('Keep at least one class in the app. Add another class before deleting this one.');return}
- const name=state.className||'this class';
- if(!confirm(`Delete ${name} and all of its locally stored attendance? Make a backup first if needed.`))return;
- delete db.classes[db.activeClassId];db.activeClassId=Object.keys(db.classes)[0];
- state=normalizeClass(db.classes[db.activeClassId]);pendingRoster=null;marks={};idx=0;noClass.checked=false;noClassReason.value='';noClassReasonWrap.classList.add('hidden');saveDatabase();
- refreshHeader();refreshSessionLabels();refreshBackupInfo();loadCurrent();renderHistory();
- alert(`${name} was deleted from this device.`);
-}
 function refreshBackupInfo(){
- if(!window.lastBackupInfo)return;
  if(state.lastBackupWeek){
    const d=state.lastBackupDate?new Date(state.lastBackupDate).toLocaleString():'';
    lastBackupInfo.textContent=`Last backup: Week ${state.lastBackupWeek}${d?' — '+d:''}`;
@@ -351,47 +302,173 @@ function refreshBackupInfo(){
    lastBackupInfo.textContent='Last backup: None yet';
  }
 }
-function refreshSessionLabels(){[...session.options].forEach((o,i)=>o.textContent=state.sessionNames[i]||`SE ${i+1}`);sessionName1.value=state.sessionNames[0]||'SE 1';sessionName2.value=state.sessionNames[1]||'SE 2';sessionName3.value=state.sessionNames[2]||'SE 3'}
 
-for(let w=1;w<=11;w++){let o=document.createElement('option');o.value=w;o.textContent='Week '+w;week.appendChild(o)}
+function refreshSessionLabels(){
+ [...session.options].forEach((o,i)=>o.textContent=state.sessionNames[i]||`SE ${i+1}`);
+ sessionName1.value=state.sessionNames[0]||'SE 1';
+ sessionName2.value=state.sessionNames[1]||'SE 2';
+ sessionName3.value=state.sessionNames[2]||'SE 3';
+}
+
+function switchClass(id){
+ if(!db.classes[id])return;
+
+ // Save the class being left.
+ persistActive();
+
+ // Load the selected class from its own stored object.
+ db.activeClassId=id;
+ state=clone(normalizeClass(db.classes[id]));
+ pendingRoster=null;
+ marks={};
+ idx=0;
+ saveDbOnly();
+
+ noClass.checked=false;
+ noClassReason.value='';
+ noClassReasonWrap.classList.add('hidden');
+
+ refreshHeader();
+ refreshSessionLabels();
+ refreshBackupInfo();
+ loadCurrent();
+ renderHistory();
+
+ if(!review.classList.contains('hidden'))renderReview();
+}
+
+function addNewClass(){
+ const name=(newClassNameInput.value||'').trim();
+ if(!name){alert('Enter a class name first.');return}
+
+ persistActive();
+
+ const id=makeClassId();
+ db.classes[id]=blankClass(name);
+ db.activeClassId=id;
+ state=clone(db.classes[id]);
+ pendingRoster=null;
+ marks={};
+ idx=0;
+ newClassNameInput.value='';
+ saveDbOnly();
+
+ refreshHeader();
+ refreshSessionLabels();
+ refreshBackupInfo();
+ loadCurrent();
+ renderHistory();
+ alert(`${name} added. It has a separate blank roster. Upload this class’s roster now.`);
+}
+
+function deleteCurrentClass(){
+ const ids=Object.keys(db.classes);
+ if(ids.length<=1){alert('Keep at least one class in the app. Add another class before deleting this one.');return}
+ const name=state.className||'this class';
+ if(!confirm(`Delete ${name} and all of its locally stored attendance? Make a backup first if needed.`))return;
+ delete db.classes[db.activeClassId];
+ db.activeClassId=Object.keys(db.classes)[0];
+ state=clone(normalizeClass(db.classes[db.activeClassId]));
+ pendingRoster=null;marks={};idx=0;
+ saveDbOnly();
+ refreshHeader();refreshSessionLabels();refreshBackupInfo();loadCurrent();renderHistory();
+}
+
+for(let w=1;w<=11;w++){
+ const o=document.createElement('option');
+ o.value=w;o.textContent='Week '+w;week.appendChild(o);
+}
 date.value=new Date().toISOString().slice(0,10);
 
 function loadCurrent(){
  const rec=state.attendance[sessionKey()];
- marks=rec?.marks||{};
+ marks=clone(rec?.marks||{});
  if(rec?.date)date.value=rec.date;
- noClass.checked=!!rec?.noClass;noClassReason.value=rec?.reason||'';noClassReasonWrap.classList.toggle('hidden',!noClass.checked);
- idx=0;while(idx<state.students.length&&marks[idx])idx++;if(idx>=state.students.length)idx=0;render();
+ noClass.checked=!!rec?.noClass;
+ noClassReason.value=rec?.reason||'';
+ noClassReasonWrap.classList.toggle('hidden',!noClass.checked);
+ idx=0;
+ while(idx<state.students.length && marks[idx])idx++;
+ if(idx>=state.students.length)idx=0;
+ render();
 }
+
 function render(){
  const t=totals();
- if(window.rosterCurrentStatus)rosterCurrentStatus.textContent=`Current roster: ${t.t} students (${t.b} boys, ${t.g} girls)`;
- if(window.classSavedStatus)classSavedStatus.textContent=`Saved locally for ${state.className||'this class'}.`;
- if(window.activeClassStatus){
-   activeClassStatus.textContent=`Active class: ${state.className||'Unnamed Class'}`;
- }
- if(window.takeRosterStatus){
-   takeRosterStatus.textContent=t.t
-     ? `Roster loaded: ${t.t} students (${t.b} boys, ${t.g} girls)`
-     : 'No roster loaded for this class. Go to Class Setup to upload or add students.';
- }
- removeStudentSelect.innerHTML='';state.students.forEach((st,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${st.first} ${st.last}`;removeStudentSelect.appendChild(o)});
+
+ activeClassStatus.textContent=`Active class: ${state.className||'Unnamed Class'}`;
+ takeRosterStatus.textContent=t.t
+   ? `Roster loaded: ${t.t} students (${t.b} boys, ${t.g} girls)`
+   : 'No roster loaded for this class.';
+
+ rosterCurrentStatus.textContent=`Current roster: ${t.t} students (${t.b} boys, ${t.g} girls)`;
+
+ removeStudentSelect.innerHTML='';
+ state.students.forEach((st,i)=>{
+   const o=document.createElement('option');
+   o.value=i;o.textContent=`${st.first} ${st.last}`;
+   removeStudentSelect.appendChild(o);
+ });
+
  document.querySelectorAll('.actions button,.student .secondary,.student .finish').forEach(b=>b.disabled=!!noClass.checked);
- if(noClass.checked){studentName.textContent='NO CLASS';studentSex.textContent=noClassReason.value.trim()||'Enter a reason above';progress.textContent=`${session.options[session.selectedIndex].text} • Week ${week.value}`;boysStat.textContent='—';girlsStat.textContent='—';totalStat.textContent='—';unmarkedStat.textContent='—';status.textContent='This session will be recorded as no class.';return}
- if(!state.students.length){studentName.textContent='No roster loaded';studentSex.textContent='';progress.textContent='';boysStat.textContent='0/0';girlsStat.textContent='0/0';totalStat.textContent='0/0';unmarkedStat.textContent='0';status.textContent='Go to Class Setup to add or upload students.';return}
- const s=state.students[idx];studentName.textContent=s.first+' '+s.last;studentSex.textContent=s.sex==='B'?'Boy':'Girl';progress.textContent=`Student ${idx+1} of ${state.students.length}`;
- const bp=state.students.reduce((n,s,i)=>n+(s.sex==='B'&&(marks[i]==='P'||marks[i]==='L')),0),
-       gp=state.students.reduce((n,s,i)=>n+(s.sex==='G'&&(marks[i]==='P'||marks[i]==='L')),0),
-       unmarked=state.students.reduce((n,s,i)=>n+(!marks[i]?1:0),0);
- boysStat.textContent=bp+'/'+t.b;girlsStat.textContent=gp+'/'+t.g;totalStat.textContent=(bp+gp)+'/'+t.t;unmarkedStat.textContent=unmarked;
+
+ if(noClass.checked){
+   studentName.textContent='NO CLASS';
+   studentSex.textContent=noClassReason.value.trim()||'Enter a reason above';
+   progress.textContent=`${session.options[session.selectedIndex].text} • Week ${week.value}`;
+   boysStat.textContent='—';girlsStat.textContent='—';totalStat.textContent='—';unmarkedStat.textContent='—';
+   status.textContent='This session will be recorded as no class.';
+   return;
+ }
+
+ if(!state.students.length){
+   studentName.textContent='No roster loaded';
+   studentSex.textContent='';
+   progress.textContent='';
+   boysStat.textContent='0/0';girlsStat.textContent='0/0';totalStat.textContent='0/0';unmarkedStat.textContent='0';
+   status.textContent='Go to Class Setup to upload students for this class.';
+   return;
+ }
+
+ if(idx<0 || idx>=state.students.length)idx=0;
+ const s=state.students[idx];
+ studentName.textContent=s.first+' '+s.last;
+ studentSex.textContent=s.sex==='B'?'Boy':'Girl';
+ progress.textContent=`Student ${idx+1} of ${state.students.length}`;
+
+ const bp=state.students.reduce((n,s,i)=>n+(s.sex==='B'&&(marks[i]==='P'||marks[i]==='L')),0);
+ const gp=state.students.reduce((n,s,i)=>n+(s.sex==='G'&&(marks[i]==='P'||marks[i]==='L')),0);
+ const unmarked=state.students.reduce((n,s,i)=>n+(!marks[i]?1:0),0);
+
+ boysStat.textContent=bp+'/'+t.b;
+ girlsStat.textContent=gp+'/'+t.g;
+ totalStat.textContent=(bp+gp)+'/'+t.t;
+ unmarkedStat.textContent=unmarked;
  status.textContent=marks[idx]?`Current mark: ${marks[idx]==='P'?'Present':marks[idx]==='L'?'Late':'Absent'}`:'Current mark: Unmarked';
 }
-function persistDraft(){state.attendance[sessionKey()]={week:+week.value,session:+session.value,date:date.value,marks,noClass:!!noClass.checked,reason:noClassReason.value.trim(),complete:false};saveState()}
-function mark(v){if(noClass.checked||!state.students.length)return;marks[idx]=v;persistDraft();if(idx<state.students.length-1)idx++;render()}
+
+function persistDraft(){
+ state.attendance[sessionKey()]={week:+week.value,session:+session.value,date:date.value,marks:clone(marks),noClass:!!noClass.checked,reason:noClassReason.value.trim(),complete:false};
+ persistActive();
+}
+
+function mark(v){
+ if(noClass.checked||!state.students.length)return;
+ marks[idx]=v;
+ persistDraft();
+ if(idx<state.students.length-1)idx++;
+ render();
+}
+
 function goBack(){if(idx>0)idx--;render()}
 function skipStudent(){if(!state.students.length||noClass.checked)return;if(idx<state.students.length-1)idx++;render()}
-function openReview(){if(noClass.checked||!state.students.length)return;persistDraft();renderReview();take.classList.add('hidden');review.classList.remove('hidden')}
+
+function openReview(){
+ if(noClass.checked||!state.students.length)return;
+ persistDraft();renderReview();take.classList.add('hidden');review.classList.remove('hidden');
+}
 function closeReview(){review.classList.add('hidden');take.classList.remove('hidden');render()}
+
 function renderReview(){
  reviewList.innerHTML='';
  state.students.forEach((st,i)=>{
@@ -399,7 +476,9 @@ function renderReview(){
    const label=document.createElement('div');label.className='reviewName';label.textContent=`${i+1}. ${st.first} ${st.last}`;
    row.appendChild(label);
    [['P','✓'],['L','L'],['A','0'],['','—']].forEach(([v,txt])=>{
-     const b=document.createElement('button');b.className='mini'+((marks[i]||'')===v?' active':'');b.textContent=txt;
+     const b=document.createElement('button');
+     b.className='mini'+((marks[i]||'')===v?' active':'');
+     b.textContent=txt;
      b.title=v==='P'?'Present':v==='L'?'Late':v==='A'?'Absent':'Unmarked';
      b.onclick=()=>{if(v)marks[i]=v;else delete marks[i];persistDraft();renderReview();};
      row.appendChild(b);
@@ -407,12 +486,15 @@ function renderReview(){
    reviewList.appendChild(row);
  });
 }
+
 function finishSession(){
  if(noClass.checked){saveNoClass();return}
  const missing=state.students.filter((s,i)=>!marks[i]).length;
  if(missing&&!confirm(`${missing} student(s) are still unmarked. They will remain unmarked, NOT absent. Save anyway?`))return;
- state.attendance[sessionKey()]={week:+week.value,session:+session.value,date:date.value,marks,noClass:false,reason:'',complete:missing===0};
- saveState();status.textContent='Session saved.';renderHistory();
+ state.attendance[sessionKey()]={week:+week.value,session:+session.value,date:date.value,marks:clone(marks),noClass:false,reason:'',complete:missing===0};
+ persistActive();
+ status.textContent='Session saved.';
+ renderHistory();
  if(+session.value===3){
    autoBackupWeek(+week.value);
    alert((missing?`Attendance saved with ${missing} unmarked student(s). `:'Attendance saved. ')+'Weekly backup downloaded automatically.');
@@ -420,11 +502,14 @@ function finishSession(){
    alert(missing?`Attendance saved with ${missing} unmarked student(s).`:'Attendance saved.');
  }
 }
+
 function saveNoClass(){
  const reason=noClassReason.value.trim();
  if(!reason){alert('Please enter a reason for no class.');return}
  state.attendance[sessionKey()]={week:+week.value,session:+session.value,date:date.value,marks:{},noClass:true,reason,complete:true};
- saveState();marks={};render();renderHistory();
+ marks={};
+ persistActive();
+ render();renderHistory();
  if(+session.value===3){
    autoBackupWeek(+week.value);
    alert('No class saved. Weekly backup downloaded automatically.');
@@ -432,107 +517,217 @@ function saveNoClass(){
    alert('No class saved.');
  }
 }
+
 function showTab(tab){
- take.classList.toggle('hidden',tab!=='take');term.classList.toggle('hidden',tab!=='term');setup.classList.toggle('hidden',tab!=='setup');review.classList.add('hidden');
- takeTab.classList.toggle('active',tab==='take');termTab.classList.toggle('active',tab==='term');setupTab.classList.toggle('active',tab==='setup');
- if(tab==='term')renderHistory()
+ take.classList.toggle('hidden',tab!=='take');
+ term.classList.toggle('hidden',tab!=='term');
+ setup.classList.toggle('hidden',tab!=='setup');
+ review.classList.add('hidden');
+ takeTab.classList.toggle('active',tab==='take');
+ termTab.classList.toggle('active',tab==='term');
+ setupTab.classList.toggle('active',tab==='setup');
+ if(tab==='term')renderHistory();
+ if(tab==='take')render();
 }
-function renderHistory(){historyBody.innerHTML='';const t=totals();for(let w=1;w<=11;w++)for(let s=1;s<=3;s++){const r=state.attendance[`W${w}S${s}`];if(!r)continue;let bp=0,gp=0,unmarked=0;state.students.forEach((st,i)=>{if(r.marks?.[i]==='P'||r.marks?.[i]==='L')st.sex==='B'?bp++:gp++;if(!r.marks?.[i])unmarked++});const tr=document.createElement('tr');const statusText=r.noClass?`No Class: ${r.reason||''}`:(unmarked?`${unmarked} unmarked`:'Complete');tr.innerHTML=`<td>${w}</td><td>${state.sessionNames[s-1]||('SE '+s)}</td><td>${r.date||''}</td><td>${r.noClass?'—':bp+'/'+t.b}</td><td>${r.noClass?'—':gp+'/'+t.g}</td><td>${r.noClass?'—':(bp+gp)+'/'+t.t}</td><td>${statusText}</td>`;tr.onclick=()=>{week.value=w;session.value=s;loadCurrent();showTab('take')};historyBody.appendChild(tr)}if(!historyBody.children.length)historyBody.innerHTML='<tr><td colspan="7" class="small">No sessions saved yet.</td></tr>'}
+
+function renderHistory(){
+ historyBody.innerHTML='';
+ const t=totals();
+ for(let w=1;w<=11;w++)for(let s=1;s<=3;s++){
+   const r=state.attendance[`W${w}S${s}`];
+   if(!r)continue;
+   let bp=0,gp=0,unmarked=0;
+   state.students.forEach((st,i)=>{
+     if(r.marks?.[i]==='P'||r.marks?.[i]==='L')st.sex==='B'?bp++:gp++;
+     if(!r.marks?.[i])unmarked++;
+   });
+   const tr=document.createElement('tr');
+   const statusText=r.noClass?`No Class: ${r.reason||''}`:(unmarked?`${unmarked} unmarked`:'Complete');
+   tr.innerHTML=`<td>${w}</td><td>${state.sessionNames[s-1]||('SE '+s)}</td><td>${r.date||''}</td><td>${r.noClass?'—':bp+'/'+t.b}</td><td>${r.noClass?'—':gp+'/'+t.g}</td><td>${r.noClass?'—':(bp+gp)+'/'+t.t}</td><td>${statusText}</td>`;
+   tr.onclick=()=>{week.value=w;session.value=s;loadCurrent();showTab('take')};
+   historyBody.appendChild(tr);
+ }
+ if(!historyBody.children.length)historyBody.innerHTML='<tr><td colspan="7" class="small">No sessions saved yet.</td></tr>';
+}
+
 function csvEscape(v){return `"${String(v??'').replaceAll('"','""')}"`}
-function downloadBlob(content,type,filename){const blob=new Blob([content],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;a.style.display='none';document.body.appendChild(a);a.click();setTimeout(()=>{a.remove();URL.revokeObjectURL(url)},1500)}
+function downloadBlob(content,type,filename){
+ const blob=new Blob([content],{type});
+ const url=URL.createObjectURL(blob);
+ const a=document.createElement('a');
+ a.href=url;a.download=filename;a.style.display='none';
+ document.body.appendChild(a);a.click();
+ setTimeout(()=>{a.remove();URL.revokeObjectURL(url)},1500);
+}
+
 function exportTermCSV(){
  const row1=['First Name','Last Name','Sex'],row2=['','',''],row3=['NO CLASS / REASON','',''];
- for(let w=1;w<=11;w++){row1.push(`WEEK ${w}`,'','');row2.push(state.sessionNames[0]||'SE 1',state.sessionNames[1]||'SE 2',state.sessionNames[2]||'SE 3');for(let s=1;s<=3;s++){const rec=state.attendance[`W${w}S${s}`];row3.push(rec?.noClass?`NO CLASS:\n\n${rec.reason||''}`:'')}}
+ for(let w=1;w<=11;w++){
+   row1.push(`WEEK ${w}`,'','');
+   row2.push(state.sessionNames[0]||'SE 1',state.sessionNames[1]||'SE 2',state.sessionNames[2]||'SE 3');
+   for(let s=1;s<=3;s++){
+     const rec=state.attendance[`W${w}S${s}`];
+     row3.push(rec?.noClass?`NO CLASS:\n\n${rec.reason||''}`:'');
+   }
+ }
  const rows=[row1,row2,row3],displayMark=m=>m==='P'?'✓':m==='A'?'0':m==='L'?'L':'';
- state.students.forEach((st,i)=>{const r=[st.first,st.last,st.sex];for(let w=1;w<=11;w++)for(let s=1;s<=3;s++){const rec=state.attendance[`W${w}S${s}`];r.push(rec?.noClass?'NC':displayMark(rec?.marks?.[i]||''))}rows.push(r)});
- const csv=rows.map(r=>r.map(csvEscape).join(',')).join('\n');const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);downloadBlob(csv,'text/csv;charset=utf-8',`${(state.className||'class').replace(/[^a-z0-9]+/gi,'_')}_Term_Attendance_${stamp}.csv`)
+ state.students.forEach((st,i)=>{
+   const r=[st.first,st.last,st.sex];
+   for(let w=1;w<=11;w++)for(let s=1;s<=3;s++){
+     const rec=state.attendance[`W${w}S${s}`];
+     r.push(rec?.noClass?'NC':displayMark(rec?.marks?.[i]||''));
+   }
+   rows.push(r);
+ });
+ const csv=rows.map(r=>r.map(csvEscape).join(',')).join('\n');
+ const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+ downloadBlob(csv,'text/csv;charset=utf-8',`${(state.className||'class').replace(/[^a-z0-9]+/gi,'_')}_Term_Attendance_${stamp}.csv`);
 }
-function parseRoster(text){const lines=text.replace(/\r/g,'').split('\n').map(x=>x.trim()).filter(Boolean);if(!lines.length)return[];const splitLine=line=>line.includes(',')?line.split(',').map(x=>x.trim().replace(/^"|"$/g,'')):line.split(/\t|\s{2,}/).map(x=>x.trim());let rows=lines.map(splitLine);let start=0,header=rows[0].map(x=>x.toLowerCase());if(header.some(x=>x.includes('first')||x.includes('last')||x==='name'||x==='sex'||x==='gender'))start=1;const out=[];for(let i=start;i<rows.length;i++){let r=rows[i],first='',last='',sex='';if(r.length>=3){first=r[0];last=r[1];sex=r[2]}else if(r.length===2){if(/^(b|g|m|f|boy|girl|male|female)$/i.test(r[1])){let parts=r[0].split(/\s+/);first=parts.shift()||'';last=parts.join(' ');sex=r[1]}else{first=r[0];last=r[1]}}else{let parts=r[0].split(/\s+/);first=parts.shift()||'';last=parts.join(' ')}sex=String(sex).trim().toUpperCase();if(['M','MALE','BOY'].includes(sex))sex='B';if(['F','FEMALE','GIRL'].includes(sex))sex='G';if(!['B','G'].includes(sex))sex='G';if(first||last)out.push({first,last,sex})}return out}
+
+function parseRoster(text){
+ const lines=text.replace(/\r/g,'').split('\n').map(x=>x.trim()).filter(Boolean);
+ if(!lines.length)return[];
+ const splitLine=line=>line.includes(',')?line.split(',').map(x=>x.trim().replace(/^"|"$/g,'')):line.split(/\t|\s{2,}/).map(x=>x.trim());
+ let rows=lines.map(splitLine);
+ let start=0;
+ const header=rows[0].map(x=>x.toLowerCase());
+ if(header.some(x=>x.includes('first')||x.includes('last')||x==='name'||x==='sex'||x==='gender'))start=1;
+ const out=[];
+ for(let i=start;i<rows.length;i++){
+   let r=rows[i],first='',last='',sex='';
+   if(r.length>=3){first=r[0];last=r[1];sex=r[2]}
+   else if(r.length===2){
+     if(/^(b|g|m|f|boy|girl|male|female)$/i.test(r[1])){
+       let parts=r[0].split(/\s+/);first=parts.shift()||'';last=parts.join(' ');sex=r[1];
+     }else{first=r[0];last=r[1]}
+   }else{
+     let parts=r[0].split(/\s+/);first=parts.shift()||'';last=parts.join(' ');
+   }
+   sex=String(sex).trim().toUpperCase();
+   if(['M','MALE','BOY'].includes(sex))sex='B';
+   if(['F','FEMALE','GIRL'].includes(sex))sex='G';
+   if(!['B','G'].includes(sex))sex='G';
+   if(first||last)out.push({first,last,sex});
+ }
+ return out;
+}
+
 rosterFile.addEventListener('change',e=>{
  const f=e.target.files[0];
  if(!f){
    pendingRoster=null;
-   if(window.rosterUploadStatus)rosterUploadStatus.textContent='No roster file selected.';
+   rosterUploadStatus.textContent='No roster file selected.';
    return;
  }
- if(window.rosterUploadStatus)rosterUploadStatus.textContent=`Reading ${f.name}...`;
+ rosterUploadStatus.textContent=`Reading ${f.name}...`;
  const reader=new FileReader();
  reader.onload=()=>{
    pendingRoster=parseRoster(reader.result);
    const b=pendingRoster.filter(s=>s.sex==='B').length;
    const g=pendingRoster.length-b;
-   if(window.rosterUploadStatus){
-     rosterUploadStatus.textContent=pendingRoster.length
-       ? `Ready to load: ${f.name} — ${pendingRoster.length} students (${b} boys, ${g} girls). Tap “Load Selected Roster”.`
-       : `No valid students were found in ${f.name}.`;
-   }
+   rosterUploadStatus.textContent=pendingRoster.length
+     ? `Ready to load: ${f.name} — ${pendingRoster.length} students (${b} boys, ${g} girls). Tap “Load Selected Roster”.`
+     : `No valid students were found in ${f.name}.`;
  };
- reader.onerror=()=>{
-   pendingRoster=null;
-   if(window.rosterUploadStatus)rosterUploadStatus.textContent=`Could not read ${f.name}.`;
- };
+ reader.onerror=()=>{pendingRoster=null;rosterUploadStatus.textContent=`Could not read ${f.name}.`};
  reader.readAsText(f);
 });
+
 function applyUploadedRoster(){
  if(!pendingRoster?.length){
-   alert('Choose a valid roster file first. Wait until the “Ready to load” message appears.');
+   alert('Choose a valid roster file first. Wait for the “Ready to load” message.');
    return;
  }
- if(state.students.length&&Object.keys(state.attendance).length&&!confirm('Replacing the roster will clear this class’s existing attendance to avoid mismatched records. Continue?'))return;
+ if(state.students.length && Object.keys(state.attendance).length &&
+    !confirm('Replacing this roster will clear this class’s existing attendance to avoid mismatched records. Continue?'))return;
 
- state.students=pendingRoster.map(s=>({first:s.first,last:s.last,sex:s.sex}));
+ state.students=clone(pendingRoster);
  state.attendance={};
  marks={};
  idx=0;
-
- // Persist this roster immediately to the active class.
- db.classes[db.activeClassId]=cloneClassData(state);
- localStorage.setItem(DB_KEY,JSON.stringify(db));
- state=db.classes[db.activeClassId];
+ persistActive();
 
  const t=totals();
- if(window.rosterUploadStatus)rosterUploadStatus.textContent=`✓ Loaded successfully: ${t.t} students (${t.b} boys, ${t.g} girls).`;
+ rosterUploadStatus.textContent=`✓ Loaded successfully: ${t.t} students (${t.b} boys, ${t.g} girls).`;
  rosterFile.value='';
  pendingRoster=null;
+
+ refreshClassSelector();
  render();
  renderHistory();
- refreshClassSelector();
- alert(`Roster loaded successfully for ${state.className||'this class'}: ${t.t} students. It has been saved on this device.`);
+ alert(`Roster loaded for ${state.className||'this class'}: ${t.t} students.`);
 }
-function downloadRosterTemplate(){downloadBlob('Firstname,Lastname,Sex\nJohn,Doe,B\nJane,Smith,G\n','text/csv;charset=utf-8','attendance_roster_template.csv')}
-function addStudent(){const first=(newFirst.value||'').trim(),last=(newLast.value||'').trim(),sex=newSex.value;if(!first&&!last){alert('Enter a student name first.');return}state.students.push({first,last,sex});newFirst.value='';newLast.value='';saveState();render();alert('Student added.')}
-function removeSelectedStudent(){if(!state.students.length)return;const i=+removeStudentSelect.value,st=state.students[i];if(!st)return;if(!confirm(`Remove ${st.first} ${st.last}? Export a backup first if this student has past attendance.`))return;state.students.splice(i,1);state.attendance={};marks={};idx=0;saveState();render();renderHistory();alert('Student removed. Existing attendance was cleared to avoid mismatched records.')}
-function saveClassName(){state.className=classNameInput.value.trim();saveState();refreshHeader();alert('Class name saved.')}
-function applySessionNames(){state.sessionNames=[(sessionName1.value||'SE 1').trim()||'SE 1',(sessionName2.value||'SE 2').trim()||'SE 2',(sessionName3.value||'SE 3').trim()||'SE 3'];saveState();refreshSessionLabels();renderHistory();alert('Session names updated.')}
+
+function downloadRosterTemplate(){
+ downloadBlob('Firstname,Lastname,Sex\nJohn,Doe,B\nJane,Smith,G\n','text/csv;charset=utf-8','attendance_roster_template.csv');
+}
+
+function addStudent(){
+ const first=(newFirst.value||'').trim(),last=(newLast.value||'').trim(),sex=newSex.value;
+ if(!first&&!last){alert('Enter a student name first.');return}
+ state.students.push({first,last,sex});
+ newFirst.value='';newLast.value='';
+ persistActive();refreshClassSelector();render();
+}
+
+function removeSelectedStudent(){
+ if(!state.students.length)return;
+ const i=+removeStudentSelect.value,st=state.students[i];
+ if(!st)return;
+ if(!confirm(`Remove ${st.first} ${st.last}? Existing attendance for this class will be cleared to avoid mismatched records.`))return;
+ state.students.splice(i,1);
+ state.attendance={};marks={};idx=0;
+ persistActive();refreshClassSelector();render();renderHistory();
+}
+
+function saveClassName(){
+ state.className=classNameInput.value.trim();
+ persistActive();refreshHeader();render();
+}
+
+function applySessionNames(){
+ state.sessionNames=[
+   (sessionName1.value||'SE 1').trim()||'SE 1',
+   (sessionName2.value||'SE 2').trim()||'SE 2',
+   (sessionName3.value||'SE 3').trim()||'SE 3'
+ ];
+ persistActive();refreshSessionLabels();renderHistory();
+}
+
 function makeBackupFilename(prefix){
  const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
  return `${(state.className||'attendance').replace(/[^a-z0-9]+/gi,'_')}_${prefix}_${stamp}.json`;
 }
-function saveBackupFile(filename){
- const payload={backupType:'single-class',version:1,classData:state};
+
+function saveClassBackupFile(filename){
+ const payload={backupType:'single-class',version:2,classData:clone(state)};
  downloadBlob(JSON.stringify(payload,null,2),'application/json',filename);
 }
-function exportAllClassesBackup(){
- saveDatabase();
- const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
- const payload={backupType:'all-classes',version:1,database:db};
- downloadBlob(JSON.stringify(payload,null,2),'application/json',`Attendance_All_Classes_Backup_${stamp}.json`);
-}
+
 function exportBackup(){
  const currentWeek=+week.value||0;
  state.lastBackupWeek=Math.max(state.lastBackupWeek||0,currentWeek);
  state.lastBackupDate=new Date().toISOString();
- saveState();refreshBackupInfo();
- saveBackupFile(makeBackupFilename('Backup'));
+ persistActive();refreshBackupInfo();
+ saveClassBackupFile(makeBackupFilename('Backup'));
 }
+
+function exportAllClassesBackup(){
+ persistActive();
+ const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+ const payload={backupType:'all-classes',version:2,database:clone(db)};
+ downloadBlob(JSON.stringify(payload,null,2),'application/json',`Attendance_All_Classes_Backup_${stamp}.json`);
+}
+
 function autoBackupWeek(w){
  state.lastBackupWeek=Math.max(state.lastBackupWeek||0,+w);
  state.lastBackupDate=new Date().toISOString();
- saveState();refreshBackupInfo();
+ persistActive();refreshBackupInfo();
  const datePart=new Date().toISOString().slice(0,10);
  const cls=(state.className||'attendance').replace(/[^a-z0-9]+/gi,'_');
- saveBackupFile(`${cls}_Backup_Week_${w}_${datePart}.json`);
+ saveClassBackupFile(`${cls}_Backup_Week_${w}_${datePart}.json`);
 }
+
 function restoreBackup(){
  const f=backupFile.files[0];
  if(!f){alert('Choose a backup JSON file first.');return}
@@ -540,46 +735,60 @@ function restoreBackup(){
  reader.onload=()=>{
    try{
      const s=JSON.parse(reader.result);
+
      if(s.backupType==='all-classes' && s.database?.classes){
-       if(!confirm('Restore ALL classes from this backup? This will replace the classes currently stored in this app.'))return;
-       db=s.database;
-       Object.keys(db.classes).forEach(id=>db.classes[id]=normalizeClass(db.classes[id]));
+       if(!confirm('Restore ALL classes from this backup? This will replace all classes currently stored in this app.'))return;
+       db=clone(s.database);
+       Object.keys(db.classes).forEach(id=>db.classes[id]=clone(normalizeClass(db.classes[id])));
        if(!db.activeClassId||!db.classes[db.activeClassId])db.activeClassId=Object.keys(db.classes)[0];
-       state=db.classes[db.activeClassId];saveDatabase();
-       refreshHeader();refreshSessionLabels();refreshBackupInfo();marks={};idx=0;loadCurrent();renderHistory();
-       alert('All classes restored.');return;
+       state=clone(db.classes[db.activeClassId]);
+       persistActive();
+       refreshHeader();refreshSessionLabels();refreshBackupInfo();loadCurrent();renderHistory();
+       alert('All classes restored.');
+       return;
      }
-     let classData=null;
-     if(s.backupType==='single-class'&&s.classData)classData=s.classData;
-     else if(Array.isArray(s.students)&&s.attendance)classData=s;
-     if(!classData)throw new Error();
-     classData=normalizeClass(classData);
-     const name=classData.className||'Restored Class';
-     const existingId=Object.keys(db.classes).find(id=>(db.classes[id].className||'')===name);
-     if(existingId && confirm(`A class named "${name}" already exists. Replace that class with this backup?`)){
-       db.classes[existingId]=classData;db.activeClassId=existingId;
-     }else{
-       const id=makeClassId();db.classes[id]=classData;db.activeClassId=id;
-     }
-     state=db.classes[db.activeClassId];saveDatabase();
-     refreshHeader();refreshSessionLabels();refreshBackupInfo();marks={};idx=0;loadCurrent();renderHistory();
-     alert(`${name} restored.`);
-   }catch(e){alert('That backup file could not be read.');}
+
+     let c=null;
+     if(s.backupType==='single-class'&&s.classData)c=s.classData;
+     else if(Array.isArray(s.students)&&s.attendance)c=s; // old backup compatibility
+     if(!c)throw new Error();
+
+     c=clone(normalizeClass(c));
+     persistActive();
+
+     const id=makeClassId();
+     db.classes[id]=c;
+     db.activeClassId=id;
+     state=clone(c);
+     persistActive();
+
+     refreshHeader();refreshSessionLabels();refreshBackupInfo();loadCurrent();renderHistory();
+     alert(`${state.className||'Class'} restored as a separate class.`);
+   }catch(e){
+     alert('That backup file could not be read.');
+   }
  };
  reader.readAsText(f);
 }
+
 function resetEverything(){
  if(!confirm('Remove ALL classes, rosters and attendance stored in this browser?'))return;
  localStorage.removeItem(DB_KEY);
+ localStorage.removeItem(OLD_MULTI_KEY);
+ localStorage.removeItem(LEGACY_KEY);
  const id=makeClassId();
  db={activeClassId:id,classes:{[id]:blankClass('')}};
- state=db.classes[id];pendingRoster=null;marks={};idx=0;saveDatabase();
+ state=clone(db.classes[id]);
+ pendingRoster=null;marks={};idx=0;
+ persistActive();
  refreshHeader();refreshSessionLabels();refreshBackupInfo();loadCurrent();renderHistory();
 }
+
 function previousWeekHasRecords(w){
  for(let s=1;s<=3;s++){if(state.attendance[`W${w}S${s}`])return true}
  return false;
 }
+
 function handleWeekChange(){
  const w=+week.value;
  const prev=w-1;
@@ -588,10 +797,23 @@ function handleWeekChange(){
  }
  loadCurrent();
 }
-week.onchange=handleWeekChange;session.onchange=loadCurrent;date.onchange=persistDraft;noClass.onchange=()=>{noClassReasonWrap.classList.toggle('hidden',!noClass.checked);persistDraft();render()};noClassReason.oninput=()=>{persistDraft();render()};
-loadState();refreshHeader();refreshSessionLabels();refreshBackupInfo();loadCurrent();renderHistory();
 
-if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}))}
+week.onchange=handleWeekChange;
+session.onchange=loadCurrent;
+date.onchange=persistDraft;
+noClass.onchange=()=>{noClassReasonWrap.classList.toggle('hidden',!noClass.checked);persistDraft();render()};
+noClassReason.oninput=()=>{persistDraft();render()};
+
+loadApp();
+refreshHeader();
+refreshSessionLabels();
+refreshBackupInfo();
+loadCurrent();
+renderHistory();
+
+if('serviceWorker' in navigator){
+ window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+}
 </script>
 </body>
 </html>
