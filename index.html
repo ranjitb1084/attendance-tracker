@@ -87,6 +87,7 @@ select,input,button{font:inherit} select,input[type=date],input[type=text],input
 <button class="secondary" style="margin:0" onclick="exportBackup()">Backup App Data</button>
 </div>
 <p class="small">CSV uses WEEK headings with your three session names underneath. Backup App Data saves roster, session names, attendance and no-class reasons as a JSON file.</p>
+<p id="lastBackupInfo" class="note">Last backup: None yet</p>
 </div>
 <div class="card" style="overflow:auto">
 <table><thead><tr><th>Week</th><th>Session</th><th>Date</th><th>Boys</th><th>Girls</th><th>Total</th><th>Status/Reason</th></tr></thead><tbody id="historyBody"></tbody></table>
@@ -157,14 +158,33 @@ select,input,button{font:inherit} select,input[type=date],input[type=text],input
 
 <script>
 const APP_KEY='attendance_tracker_private_v1'; // keep same key so existing local data is preserved
-let state={className:'',sessionNames:['SE 1','SE 2','SE 3'],students:[],attendance:{}};
+let state={className:'',sessionNames:['SE 1','SE 2','SE 3'],students:[],attendance:{},lastBackupWeek:0,lastBackupDate:''};
 let pendingRoster=null, idx=0, marks={};
 
 function saveState(){localStorage.setItem(APP_KEY,JSON.stringify(state))}
-function loadState(){try{const s=JSON.parse(localStorage.getItem(APP_KEY)||'null');if(s)state=s}catch(e){}}
+function loadState(){try{
+ const s=JSON.parse(localStorage.getItem(APP_KEY)||'null');
+ if(s){
+   state=s;
+   if(!state.sessionNames)state.sessionNames=['SE 1','SE 2','SE 3'];
+   if(!state.students)state.students=[];
+   if(!state.attendance)state.attendance={};
+   if(typeof state.lastBackupWeek!=='number')state.lastBackupWeek=0;
+   if(!state.lastBackupDate)state.lastBackupDate='';
+ }
+}catch(e){}}
 function sessionKey(){return `W${week.value}S${session.value}`}
 function totals(){let b=0,g=0;state.students.forEach(s=>s.sex==='B'?b++:g++);return {b,g,t:b+g}}
 function refreshHeader(){appTitle.textContent=(state.className||'Attendance Tracker')+(state.className?' Attendance':'');classNameInput.value=state.className||''}
+function refreshBackupInfo(){
+ if(!window.lastBackupInfo)return;
+ if(state.lastBackupWeek){
+   const d=state.lastBackupDate?new Date(state.lastBackupDate).toLocaleString():'';
+   lastBackupInfo.textContent=`Last backup: Week ${state.lastBackupWeek}${d?' — '+d:''}`;
+ }else{
+   lastBackupInfo.textContent='Last backup: None yet';
+ }
+}
 function refreshSessionLabels(){[...session.options].forEach((o,i)=>o.textContent=state.sessionNames[i]||`SE ${i+1}`);sessionName1.value=state.sessionNames[0]||'SE 1';sessionName2.value=state.sessionNames[1]||'SE 2';sessionName3.value=state.sessionNames[2]||'SE 3'}
 
 for(let w=1;w<=11;w++){let o=document.createElement('option');o.value=w;o.textContent='Week '+w;week.appendChild(o)}
@@ -211,8 +231,31 @@ function renderReview(){
    reviewList.appendChild(row);
  });
 }
-function finishSession(){if(noClass.checked){saveNoClass();return}const missing=state.students.filter((s,i)=>!marks[i]).length;if(missing&&!confirm(`${missing} student(s) are still unmarked. They will remain unmarked, NOT absent. Save anyway?`))return;state.attendance[sessionKey()]={week:+week.value,session:+session.value,date:date.value,marks,noClass:false,reason:'',complete:missing===0};saveState();status.textContent='Session saved.';renderHistory();alert(missing?`Attendance saved with ${missing} unmarked student(s).`:'Attendance saved.')}
-function saveNoClass(){const reason=noClassReason.value.trim();if(!reason){alert('Please enter a reason for no class.');return}state.attendance[sessionKey()]={week:+week.value,session:+session.value,date:date.value,marks:{},noClass:true,reason,complete:true};saveState();marks={};render();renderHistory();alert('No class saved.')}
+function finishSession(){
+ if(noClass.checked){saveNoClass();return}
+ const missing=state.students.filter((s,i)=>!marks[i]).length;
+ if(missing&&!confirm(`${missing} student(s) are still unmarked. They will remain unmarked, NOT absent. Save anyway?`))return;
+ state.attendance[sessionKey()]={week:+week.value,session:+session.value,date:date.value,marks,noClass:false,reason:'',complete:missing===0};
+ saveState();status.textContent='Session saved.';renderHistory();
+ if(+session.value===3){
+   autoBackupWeek(+week.value);
+   alert((missing?`Attendance saved with ${missing} unmarked student(s). `:'Attendance saved. ')+'Weekly backup downloaded automatically.');
+ }else{
+   alert(missing?`Attendance saved with ${missing} unmarked student(s).`:'Attendance saved.');
+ }
+}
+function saveNoClass(){
+ const reason=noClassReason.value.trim();
+ if(!reason){alert('Please enter a reason for no class.');return}
+ state.attendance[sessionKey()]={week:+week.value,session:+session.value,date:date.value,marks:{},noClass:true,reason,complete:true};
+ saveState();marks={};render();renderHistory();
+ if(+session.value===3){
+   autoBackupWeek(+week.value);
+   alert('No class saved. Weekly backup downloaded automatically.');
+ }else{
+   alert('No class saved.');
+ }
+}
 function showTab(tab){
  take.classList.toggle('hidden',tab!=='take');term.classList.toggle('hidden',tab!=='term');setup.classList.toggle('hidden',tab!=='setup');review.classList.add('hidden');
  takeTab.classList.toggle('active',tab==='take');termTab.classList.toggle('active',tab==='term');setupTab.classList.toggle('active',tab==='setup');
@@ -236,11 +279,44 @@ function addStudent(){const first=(newFirst.value||'').trim(),last=(newLast.valu
 function removeSelectedStudent(){if(!state.students.length)return;const i=+removeStudentSelect.value,st=state.students[i];if(!st)return;if(!confirm(`Remove ${st.first} ${st.last}? Export a backup first if this student has past attendance.`))return;state.students.splice(i,1);state.attendance={};marks={};idx=0;saveState();render();renderHistory();alert('Student removed. Existing attendance was cleared to avoid mismatched records.')}
 function saveClassName(){state.className=classNameInput.value.trim();saveState();refreshHeader();alert('Class name saved.')}
 function applySessionNames(){state.sessionNames=[(sessionName1.value||'SE 1').trim()||'SE 1',(sessionName2.value||'SE 2').trim()||'SE 2',(sessionName3.value||'SE 3').trim()||'SE 3'];saveState();refreshSessionLabels();renderHistory();alert('Session names updated.')}
-function exportBackup(){const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);downloadBlob(JSON.stringify(state,null,2),'application/json',`${(state.className||'attendance').replace(/[^a-z0-9]+/gi,'_')}_Backup_${stamp}.json`)}
-function restoreBackup(){const f=backupFile.files[0];if(!f){alert('Choose a backup JSON file first.');return}const reader=new FileReader();reader.onload=()=>{try{const s=JSON.parse(reader.result);if(!Array.isArray(s.students)||!s.attendance)throw new Error();state=s;saveState();refreshHeader();refreshSessionLabels();marks={};idx=0;loadCurrent();renderHistory();alert('Backup restored.')}catch(e){alert('That backup file could not be read.')}};reader.readAsText(f)}
-function resetEverything(){if(!confirm('Remove the roster and ALL attendance stored in this browser?'))return;localStorage.removeItem(APP_KEY);state={className:'',sessionNames:['SE 1','SE 2','SE 3'],students:[],attendance:{}};marks={};idx=0;refreshHeader();refreshSessionLabels();loadCurrent();renderHistory()}
-week.onchange=loadCurrent;session.onchange=loadCurrent;date.onchange=persistDraft;noClass.onchange=()=>{noClassReasonWrap.classList.toggle('hidden',!noClass.checked);persistDraft();render()};noClassReason.oninput=()=>{persistDraft();render()};
-loadState();refreshHeader();refreshSessionLabels();loadCurrent();renderHistory();
+function makeBackupFilename(prefix){
+ const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+ return `${(state.className||'attendance').replace(/[^a-z0-9]+/gi,'_')}_${prefix}_${stamp}.json`;
+}
+function saveBackupFile(filename){
+ downloadBlob(JSON.stringify(state,null,2),'application/json',filename);
+}
+function exportBackup(){
+ const currentWeek=+week.value||0;
+ state.lastBackupWeek=Math.max(state.lastBackupWeek||0,currentWeek);
+ state.lastBackupDate=new Date().toISOString();
+ saveState();refreshBackupInfo();
+ saveBackupFile(makeBackupFilename('Backup'));
+}
+function autoBackupWeek(w){
+ state.lastBackupWeek=Math.max(state.lastBackupWeek||0,+w);
+ state.lastBackupDate=new Date().toISOString();
+ saveState();refreshBackupInfo();
+ const datePart=new Date().toISOString().slice(0,10);
+ const cls=(state.className||'attendance').replace(/[^a-z0-9]+/gi,'_');
+ saveBackupFile(`${cls}_Backup_Week_${w}_${datePart}.json`);
+}
+function restoreBackup(){const f=backupFile.files[0];if(!f){alert('Choose a backup JSON file first.');return}const reader=new FileReader();reader.onload=()=>{try{const s=JSON.parse(reader.result);if(!Array.isArray(s.students)||!s.attendance)throw new Error();state=s;if(typeof state.lastBackupWeek!=='number')state.lastBackupWeek=0;if(!state.lastBackupDate)state.lastBackupDate='';saveState();refreshHeader();refreshSessionLabels();refreshBackupInfo();marks={};idx=0;loadCurrent();renderHistory();alert('Backup restored.')}catch(e){alert('That backup file could not be read.')}};reader.readAsText(f)}
+function resetEverything(){if(!confirm('Remove the roster and ALL attendance stored in this browser?'))return;localStorage.removeItem(APP_KEY);state={className:'',sessionNames:['SE 1','SE 2','SE 3'],students:[],attendance:{},lastBackupWeek:0,lastBackupDate:''};marks={};idx=0;refreshHeader();refreshSessionLabels();refreshBackupInfo();loadCurrent();renderHistory()}
+function previousWeekHasRecords(w){
+ for(let s=1;s<=3;s++){if(state.attendance[`W${w}S${s}`])return true}
+ return false;
+}
+function handleWeekChange(){
+ const w=+week.value;
+ const prev=w-1;
+ if(prev>=1 && previousWeekHasRecords(prev) && (state.lastBackupWeek||0)<prev){
+   alert(`Week ${prev} has attendance records but no recorded backup yet. Consider backing up before continuing with Week ${w}.`);
+ }
+ loadCurrent();
+}
+week.onchange=handleWeekChange;session.onchange=loadCurrent;date.onchange=persistDraft;noClass.onchange=()=>{noClassReasonWrap.classList.toggle('hidden',!noClass.checked);persistDraft();render()};noClassReason.oninput=()=>{persistDraft();render()};
+loadState();refreshHeader();refreshSessionLabels();refreshBackupInfo();loadCurrent();renderHistory();
 
 if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}))}
 </script>
