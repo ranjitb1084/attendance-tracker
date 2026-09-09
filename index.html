@@ -38,6 +38,7 @@ select,input,button{font:inherit} select,input[type=date],input[type=text],input
 <div><select id="classSelector" onchange="switchClass(this.value)"></select></div>
 <div><button class="secondary" style="margin:0" onclick="showTab('setup')">Manage Classes</button></div>
 </div>
+<div id="takeRosterStatus" class="note" style="margin-top:10px">No roster loaded for this class.</div>
 </div>
 <div class="tabs">
 <button id="takeTab" class="active" onclick="showTab('take')">Take Attendance</button>
@@ -130,9 +131,12 @@ select,input,button{font:inherit} select,input[type=date],input[type=text],input
 <label>Upload roster</label><input id="rosterFile" type="file" accept=".csv,.txt,text/csv,text/plain">
 <div class="btnrow" style="margin-top:10px">
 <button class="secondary" style="margin:0" onclick="downloadRosterTemplate()">Roster Template</button>
-<button class="secondary" style="margin:0" onclick="applyUploadedRoster()">Use Uploaded Roster</button>
+<button class="secondary" style="margin:0" onclick="applyUploadedRoster()">Load Selected Roster</button>
 </div>
-<div id="rosterPreview" class="note" style="margin-top:10px">Current roster: <span id="rosterCount">0 students</span></div>
+<div id="rosterPreview" class="note" style="margin-top:10px">
+<div id="rosterCurrentStatus">Current roster: 0 students</div>
+<div id="rosterUploadStatus" class="small" style="margin-top:6px">No roster file selected.</div>
+</div>
 </div>
 
 <div class="card">
@@ -296,7 +300,13 @@ function loadCurrent(){
  idx=0;while(idx<state.students.length&&marks[idx])idx++;if(idx>=state.students.length)idx=0;render();
 }
 function render(){
- const t=totals();rosterCount.textContent=`${t.t} students (${t.b} boys, ${t.g} girls)`;
+ const t=totals();
+ if(window.rosterCurrentStatus)rosterCurrentStatus.textContent=`Current roster: ${t.t} students (${t.b} boys, ${t.g} girls)`;
+ if(window.takeRosterStatus){
+   takeRosterStatus.textContent=t.t
+     ? `Roster loaded: ${t.t} students (${t.b} boys, ${t.g} girls)`
+     : 'No roster loaded for this class. Go to Class Setup to upload or add students.';
+ }
  removeStudentSelect.innerHTML='';state.students.forEach((st,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${st.first} ${st.last}`;removeStudentSelect.appendChild(o)});
  document.querySelectorAll('.actions button,.student .secondary,.student .finish').forEach(b=>b.disabled=!!noClass.checked);
  if(noClass.checked){studentName.textContent='NO CLASS';studentSex.textContent=noClassReason.value.trim()||'Enter a reason above';progress.textContent=`${session.options[session.selectedIndex].text} • Week ${week.value}`;boysStat.textContent='—';girlsStat.textContent='—';totalStat.textContent='—';unmarkedStat.textContent='—';status.textContent='This session will be recorded as no class.';return}
@@ -370,8 +380,50 @@ function exportTermCSV(){
  const csv=rows.map(r=>r.map(csvEscape).join(',')).join('\n');const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);downloadBlob(csv,'text/csv;charset=utf-8',`${(state.className||'class').replace(/[^a-z0-9]+/gi,'_')}_Term_Attendance_${stamp}.csv`)
 }
 function parseRoster(text){const lines=text.replace(/\r/g,'').split('\n').map(x=>x.trim()).filter(Boolean);if(!lines.length)return[];const splitLine=line=>line.includes(',')?line.split(',').map(x=>x.trim().replace(/^"|"$/g,'')):line.split(/\t|\s{2,}/).map(x=>x.trim());let rows=lines.map(splitLine);let start=0,header=rows[0].map(x=>x.toLowerCase());if(header.some(x=>x.includes('first')||x.includes('last')||x==='name'||x==='sex'||x==='gender'))start=1;const out=[];for(let i=start;i<rows.length;i++){let r=rows[i],first='',last='',sex='';if(r.length>=3){first=r[0];last=r[1];sex=r[2]}else if(r.length===2){if(/^(b|g|m|f|boy|girl|male|female)$/i.test(r[1])){let parts=r[0].split(/\s+/);first=parts.shift()||'';last=parts.join(' ');sex=r[1]}else{first=r[0];last=r[1]}}else{let parts=r[0].split(/\s+/);first=parts.shift()||'';last=parts.join(' ')}sex=String(sex).trim().toUpperCase();if(['M','MALE','BOY'].includes(sex))sex='B';if(['F','FEMALE','GIRL'].includes(sex))sex='G';if(!['B','G'].includes(sex))sex='G';if(first||last)out.push({first,last,sex})}return out}
-rosterFile.addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;const reader=new FileReader();reader.onload=()=>{pendingRoster=parseRoster(reader.result);const b=pendingRoster.filter(s=>s.sex==='B').length,g=pendingRoster.length-b;rosterPreview.textContent=`Uploaded roster ready: ${pendingRoster.length} students (${b} boys, ${g} girls)`};reader.readAsText(f)});
-function applyUploadedRoster(){if(!pendingRoster?.length){alert('Choose a roster file first.');return}if(state.students.length&&Object.keys(state.attendance).length&&!confirm('Replacing the roster can affect old attendance alignment. Continue?'))return;state.students=pendingRoster;state.attendance={};marks={};idx=0;saveState();render();alert('Roster loaded and stored only on this device.')}
+rosterFile.addEventListener('change',e=>{
+ const f=e.target.files[0];
+ if(!f){
+   pendingRoster=null;
+   if(window.rosterUploadStatus)rosterUploadStatus.textContent='No roster file selected.';
+   return;
+ }
+ if(window.rosterUploadStatus)rosterUploadStatus.textContent=`Reading ${f.name}...`;
+ const reader=new FileReader();
+ reader.onload=()=>{
+   pendingRoster=parseRoster(reader.result);
+   const b=pendingRoster.filter(s=>s.sex==='B').length;
+   const g=pendingRoster.length-b;
+   if(window.rosterUploadStatus){
+     rosterUploadStatus.textContent=pendingRoster.length
+       ? `Ready to load: ${f.name} — ${pendingRoster.length} students (${b} boys, ${g} girls). Tap “Load Selected Roster”.`
+       : `No valid students were found in ${f.name}.`;
+   }
+ };
+ reader.onerror=()=>{
+   pendingRoster=null;
+   if(window.rosterUploadStatus)rosterUploadStatus.textContent=`Could not read ${f.name}.`;
+ };
+ reader.readAsText(f);
+});
+function applyUploadedRoster(){
+ if(!pendingRoster?.length){
+   alert('Choose a valid roster file first. Wait until the “Ready to load” message appears.');
+   return;
+ }
+ if(state.students.length&&Object.keys(state.attendance).length&&!confirm('Replacing the roster will clear this class’s existing attendance to avoid mismatched records. Continue?'))return;
+ state.students=pendingRoster.map(s=>({...s}));
+ state.attendance={};
+ marks={};
+ idx=0;
+ saveState();
+ const t=totals();
+ if(window.rosterUploadStatus)rosterUploadStatus.textContent=`✓ Loaded successfully: ${t.t} students (${t.b} boys, ${t.g} girls).`;
+ rosterFile.value='';
+ pendingRoster=null;
+ render();
+ renderHistory();
+ alert(`Roster loaded successfully for ${state.className||'this class'}: ${t.t} students.`);
+}
 function downloadRosterTemplate(){downloadBlob('Firstname,Lastname,Sex\nJohn,Doe,B\nJane,Smith,G\n','text/csv;charset=utf-8','attendance_roster_template.csv')}
 function addStudent(){const first=(newFirst.value||'').trim(),last=(newLast.value||'').trim(),sex=newSex.value;if(!first&&!last){alert('Enter a student name first.');return}state.students.push({first,last,sex});newFirst.value='';newLast.value='';saveState();render();alert('Student added.')}
 function removeSelectedStudent(){if(!state.students.length)return;const i=+removeStudentSelect.value,st=state.students[i];if(!st)return;if(!confirm(`Remove ${st.first} ${st.last}? Export a backup first if this student has past attendance.`))return;state.students.splice(i,1);state.attendance={};marks={};idx=0;saveState();render();renderHistory();alert('Student removed. Existing attendance was cleared to avoid mismatched records.')}

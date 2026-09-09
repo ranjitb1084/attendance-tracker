@@ -1,4 +1,4 @@
-const CACHE='attendance-tracker-v7';
+const CACHE='attendance-tracker-v9';
 const ASSETS=['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 
 self.addEventListener('install', event => {
