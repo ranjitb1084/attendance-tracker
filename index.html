@@ -38,7 +38,8 @@ select,input,button{font:inherit} select,input[type=date],input[type=text],input
 <div><select id="classSelector" onchange="switchClass(this.value)"></select></div>
 <div><button class="secondary" style="margin:0" onclick="showTab('setup')">Manage Classes</button></div>
 </div>
-<div id="takeRosterStatus" class="note" style="margin-top:10px">No roster loaded for this class.</div>
+<div id="activeClassStatus" class="note" style="margin-top:10px;font-weight:700">Active class: —</div>
+<div id="takeRosterStatus" class="note" style="margin-top:6px">No roster loaded for this class.</div>
 </div>
 <div class="tabs">
 <button id="takeTab" class="active" onclick="showTab('take')">Take Attendance</button>
@@ -135,6 +136,7 @@ select,input,button{font:inherit} select,input[type=date],input[type=text],input
 </div>
 <div id="rosterPreview" class="note" style="margin-top:10px">
 <div id="rosterCurrentStatus">Current roster: 0 students</div>
+<div id="classSavedStatus" class="small" style="margin-top:4px">Saved locally.</div>
 <div id="rosterUploadStatus" class="small" style="margin-top:6px">No roster file selected.</div>
 </div>
 </div>
@@ -200,12 +202,22 @@ function normalizeClass(s){
  return s;
 }
 
+function cloneClassData(s){
+ return JSON.parse(JSON.stringify(normalizeClass(s)));
+}
+
 function saveDatabase(){
- if(db.activeClassId && db.classes[db.activeClassId])db.classes[db.activeClassId]=state;
+ if(db.activeClassId && db.classes[db.activeClassId]){
+   db.classes[db.activeClassId]=cloneClassData(state);
+ }
  localStorage.setItem(DB_KEY,JSON.stringify(db));
 }
 
-function saveState(){saveDatabase()}
+function saveState(){
+ saveDatabase();
+ // Re-bind state to the freshly stored class object so each class remains isolated.
+ state=db.classes[db.activeClassId];
+}
 
 function loadState(){
  try{
@@ -254,19 +266,71 @@ function refreshClassSelector(){
  });
 }
 function switchClass(id){
- if(!db.classes[id]||id===db.activeClassId)return;
- saveDatabase();db.activeClassId=id;state=normalizeClass(db.classes[id]);db.classes[id]=state;
- pendingRoster=null;marks={};idx=0;
- refreshHeader();refreshSessionLabels();refreshBackupInfo();loadCurrent();renderHistory();saveDatabase();
+ if(!db.classes[id])return;
+
+ // Save the class we are leaving as an independent snapshot.
+ if(db.activeClassId && db.classes[db.activeClassId]){
+   db.classes[db.activeClassId]=cloneClassData(state);
+ }
+ localStorage.setItem(DB_KEY,JSON.stringify(db));
+
+ // Load the selected class as its own independent object.
+ db.activeClassId=id;
+ state=cloneClassData(db.classes[id]);
+ db.classes[id]=cloneClassData(state);
+
+ pendingRoster=null;
+ marks={};
+ idx=0;
+ noClass.checked=false;
+ noClassReason.value='';
+ noClassReasonWrap.classList.add('hidden');
+
+ refreshHeader();
+ refreshSessionLabels();
+ refreshBackupInfo();
+ loadCurrent();
+ renderHistory();
+
+ if(!review.classList.contains('hidden')){
+   renderReview();
+ }
+
+ saveDatabase();
+ state=db.classes[db.activeClassId];
 }
 function addNewClass(){
  const name=(newClassNameInput.value||'').trim();
  if(!name){alert('Enter a class name first.');return}
+
+ // Persist the current class before creating another class.
+ if(db.activeClassId && db.classes[db.activeClassId]){
+   db.classes[db.activeClassId]=cloneClassData(state);
+ }
+ localStorage.setItem(DB_KEY,JSON.stringify(db));
+
+ const id=makeClassId();
+ db.classes[id]=blankClass(name);
+ db.activeClassId=id;
+ state=cloneClassData(db.classes[id]);
+ db.classes[id]=cloneClassData(state);
+
+ newClassNameInput.value='';
+ pendingRoster=null;
+ marks={};
+ idx=0;
+ noClass.checked=false;
+ noClassReason.value='';
+ noClassReasonWrap.classList.add('hidden');
+
  saveDatabase();
- const id=makeClassId();db.classes[id]=blankClass(name);db.activeClassId=id;state=db.classes[id];
- newClassNameInput.value='';pendingRoster=null;marks={};idx=0;saveDatabase();
- refreshHeader();refreshSessionLabels();refreshBackupInfo();loadCurrent();renderHistory();
- alert(`${name} added. You can now upload its roster.`);
+ state=db.classes[db.activeClassId];
+ refreshHeader();
+ refreshSessionLabels();
+ refreshBackupInfo();
+ loadCurrent();
+ renderHistory();
+ alert(`${name} added. Your previous class has been saved. You can now upload this class’s roster.`);
 }
 function deleteCurrentClass(){
  const ids=Object.keys(db.classes);
@@ -274,7 +338,7 @@ function deleteCurrentClass(){
  const name=state.className||'this class';
  if(!confirm(`Delete ${name} and all of its locally stored attendance? Make a backup first if needed.`))return;
  delete db.classes[db.activeClassId];db.activeClassId=Object.keys(db.classes)[0];
- state=normalizeClass(db.classes[db.activeClassId]);pendingRoster=null;marks={};idx=0;saveDatabase();
+ state=normalizeClass(db.classes[db.activeClassId]);pendingRoster=null;marks={};idx=0;noClass.checked=false;noClassReason.value='';noClassReasonWrap.classList.add('hidden');saveDatabase();
  refreshHeader();refreshSessionLabels();refreshBackupInfo();loadCurrent();renderHistory();
  alert(`${name} was deleted from this device.`);
 }
@@ -302,6 +366,10 @@ function loadCurrent(){
 function render(){
  const t=totals();
  if(window.rosterCurrentStatus)rosterCurrentStatus.textContent=`Current roster: ${t.t} students (${t.b} boys, ${t.g} girls)`;
+ if(window.classSavedStatus)classSavedStatus.textContent=`Saved locally for ${state.className||'this class'}.`;
+ if(window.activeClassStatus){
+   activeClassStatus.textContent=`Active class: ${state.className||'Unnamed Class'}`;
+ }
  if(window.takeRosterStatus){
    takeRosterStatus.textContent=t.t
      ? `Roster loaded: ${t.t} students (${t.b} boys, ${t.g} girls)`
@@ -411,18 +479,25 @@ function applyUploadedRoster(){
    return;
  }
  if(state.students.length&&Object.keys(state.attendance).length&&!confirm('Replacing the roster will clear this class’s existing attendance to avoid mismatched records. Continue?'))return;
- state.students=pendingRoster.map(s=>({...s}));
+
+ state.students=pendingRoster.map(s=>({first:s.first,last:s.last,sex:s.sex}));
  state.attendance={};
  marks={};
  idx=0;
- saveState();
+
+ // Persist this roster immediately to the active class.
+ db.classes[db.activeClassId]=cloneClassData(state);
+ localStorage.setItem(DB_KEY,JSON.stringify(db));
+ state=db.classes[db.activeClassId];
+
  const t=totals();
  if(window.rosterUploadStatus)rosterUploadStatus.textContent=`✓ Loaded successfully: ${t.t} students (${t.b} boys, ${t.g} girls).`;
  rosterFile.value='';
  pendingRoster=null;
  render();
  renderHistory();
- alert(`Roster loaded successfully for ${state.className||'this class'}: ${t.t} students.`);
+ refreshClassSelector();
+ alert(`Roster loaded successfully for ${state.className||'this class'}: ${t.t} students. It has been saved on this device.`);
 }
 function downloadRosterTemplate(){downloadBlob('Firstname,Lastname,Sex\nJohn,Doe,B\nJane,Smith,G\n','text/csv;charset=utf-8','attendance_roster_template.csv')}
 function addStudent(){const first=(newFirst.value||'').trim(),last=(newLast.value||'').trim(),sex=newSex.value;if(!first&&!last){alert('Enter a student name first.');return}state.students.push({first,last,sex});newFirst.value='';newLast.value='';saveState();render();alert('Student added.')}
