@@ -223,7 +223,7 @@ function csvEscape(v){return `"${String(v??'').replaceAll('"','""')}"`}
 function downloadBlob(content,type,filename){const blob=new Blob([content],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;a.style.display='none';document.body.appendChild(a);a.click();setTimeout(()=>{a.remove();URL.revokeObjectURL(url)},1500)}
 function exportTermCSV(){
  const row1=['First Name','Last Name','Sex'],row2=['','',''],row3=['NO CLASS / REASON','',''];
- for(let w=1;w<=11;w++){row1.push(`WEEK ${w}`,'','');row2.push(state.sessionNames[0]||'SE 1',state.sessionNames[1]||'SE 2',state.sessionNames[2]||'SE 3');for(let s=1;s<=3;s++){const rec=state.attendance[`W${w}S${s}`];row3.push(rec?.noClass?`NO CLASS: ${rec.reason||''}`:'')}}
+ for(let w=1;w<=11;w++){row1.push(`WEEK ${w}`,'','');row2.push(state.sessionNames[0]||'SE 1',state.sessionNames[1]||'SE 2',state.sessionNames[2]||'SE 3');for(let s=1;s<=3;s++){const rec=state.attendance[`W${w}S${s}`];row3.push(rec?.noClass?`NO CLASS:\n\n${rec.reason||''}`:'')}}
  const rows=[row1,row2,row3],displayMark=m=>m==='P'?'✓':m==='A'?'0':m==='L'?'L':'';
  state.students.forEach((st,i)=>{const r=[st.first,st.last,st.sex];for(let w=1;w<=11;w++)for(let s=1;s<=3;s++){const rec=state.attendance[`W${w}S${s}`];r.push(rec?.noClass?'NC':displayMark(rec?.marks?.[i]||''))}rows.push(r)});
  const csv=rows.map(r=>r.map(csvEscape).join(',')).join('\n');const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);downloadBlob(csv,'text/csv;charset=utf-8',`${(state.className||'class').replace(/[^a-z0-9]+/gi,'_')}_Term_Attendance_${stamp}.csv`)
